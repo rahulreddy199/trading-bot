@@ -63,18 +63,17 @@ This prevents oversized positions in volatile names even when the per-trade risk
 ### Exit System (Growth)
 
 1. **Initial**: stop at wider of (setup low − 0.2×ATR) or (entry − 2.5×ATR)
-2. **Protected** (at 1.5R): stop moves to entry − 0.1×ATR
+2. **Protected** (at 1.5R): stop moves to entry − 0.1×ATR (near-breakeven with noise buffer)
 3. **Trailing** (at 2.5R + 5 bars in profit): trailing stop at 3.0×ATR below highest close
 4. **Tight trailing** (at 3R+): trail tightens to 2.0×ATR — keeps more profit from big runners
 5. **Time stop**: if no profit after 10 bars → exit at market
 
 ### Trail Upgrades at Milestones
 Once trailing is active, the bot progressively tightens the trail as R increases:
-- **3R+**: trail tightens from 3.0×ATR to 2.0×ATR
-- **4R+**: trail tightens to 2.0×ATR (cancel/replace)
-- **5R+**: trail tightens to 1.75×ATR
-- **6R+**: trail tightens to 1.5×ATR
-- **8R+**: trail tightens to 1.5×ATR (re-fires upgrade check)
+- **2.5R + 5 bars in profit**: activate trailing at 3.0×ATR
+- **3R+**: tighten to 2.0×ATR
+- **5R+**: tighten to 1.75×ATR
+- **6R+**: tighten to 1.5×ATR
 
 Each upgrade fires only once per threshold and uses cancel-and-verify before replacing.
 
@@ -103,7 +102,7 @@ The growth bot has multiple layers of position protection:
 Skips entries when the current price is already >3% above the trigger price (configurable via `gap_up_max_pct`). Prevents chasing extended breakouts.
 
 ### Daily Circuit Breaker
-If account equity drops >3% in a single day, new entries are automatically halted. Position management continues normally.
+If account equity drops >3% from prior close in a single day, new entries are automatically halted. Position management continues normally. This is separate from the portfolio drawdown breaker (see Safety & Guardrails).
 
 ### Portfolio Risk Budget
 Before each new entry, the bot calculates total portfolio risk (sum of r_per_share × qty for all open positions). New entries are blocked if adding the trade would exceed the `max_total_portfolio_risk_pct` (3% in full risk mode). Risk per existing position uses a fallback chain: tracked data → last_orders → order_plan → conservative 2.5% estimate.
@@ -187,7 +186,9 @@ The conservative bot trades confirmed pullbacks in broad uptrends with strict co
 |-----------|-------------|
 | **8:00 AM** | 💓 Heartbeat alert — confirms bot is alive |
 | **9:35 AM** | 🌅 **Morning run**: scan watchlist → filter candidates → place stop-limit orders |
-| **4:05 PM** | 🌆 **Afternoon run**: manage positions → update performance → write journal |
+| **10:30 AM** | 📈 **Growth manage run**: intraday phase checks (idempotent) |
+| **1:00 PM** | 📈 **Growth manage run**: intraday phase checks (idempotent) |
+| **4:05 PM** | 🌆 **Afternoon run**: full manage (both bots) → performance → journal |
 | **5:00 PM** | 💾 **Daily backup**: local + S3 (if configured) |
 | **Saturday 10 AM** | 📊 **Weekly review**: analyze performance → propose parameter tweaks |
 
@@ -367,7 +368,8 @@ sudo systemctl enable trading-bot && sudo systemctl start trading-bot
 
 - **Paper trading by default** — live trading requires explicit env var
 - **Kill switch** — create `state/KILL_SWITCH` to instantly halt all entries
-- **Drawdown circuit breaker** — halts entries if drawdown exceeds 15%
+- **Daily loss breaker** — halts new entries if equity drops >3% from prior close; management continues
+- **Portfolio drawdown breaker** — halts new entries if drawdown from equity peak exceeds 15%
 - **VIX override** — forces reduced risk when VIX > 30
 - **Self-tuning disabled by default** — must be manually enabled after paper validation
 - **Idempotency guard** — won't double-place orders if triggered twice
@@ -399,6 +401,23 @@ sudo systemctl enable trading-bot && sudo systemctl start trading-bot
 | Breadth proxy (RSP) | yfinance | Defaults to neutral (50) |
 
 **Note:** yfinance is used for screening only (prior-day closes). All execution-critical data comes from Alpaca. For production, upgrade to Alpaca's paid market data plan to get full SIP real-time data.
+
+## Observability & Attribution
+
+Every trade captures rich metadata for post-hoc analysis and future strategy refinement:
+
+| Field | Purpose |
+|-------|---------|
+| **Setup type** | Breakout, continuation, or shallow pullback |
+| **Relative volume** | Volume vs 20-day average at entry |
+| **ATR % of price** | Volatility bucket at entry |
+| **Volatility scalar** | Position size adjustment applied |
+| **Market regime** | SPY/QQQ regime at time of entry |
+| **Slippage** | Planned vs actual fill ($ and bps) |
+| **R at exit** | Final R-multiple achieved |
+| **Exit reason** | Stop, trail, time stop, or manual |
+
+This data feeds `learning.py` for grouped performance stats (e.g., win rate by setup, avg R by volatility bucket) and will drive future setup-specific ranking once 20–30 trades provide statistical significance.
 
 ## Disclaimer
 
