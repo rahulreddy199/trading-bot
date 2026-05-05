@@ -1125,6 +1125,29 @@ def main():
     schedule.every().thursday.at("16:05").do(afternoon_run)
     schedule.every().friday.at("16:05").do(afternoon_run)
 
+    # Intraday growth management (catch phase transitions faster)
+    def intraday_growth_manage():
+        """Run growth position management mid-day for faster phase transitions."""
+        print(f"\n  INTRADAY GROWTH MANAGE - {datetime.now().strftime('%H:%M')}")
+        log_event("run_start", {"type": "intraday_manage_growth"})
+        try:
+            result = run_script("manage_growth")
+            log_event("intraday_manage", {"success": result.get("success"), "output": result.get("output", "")[:200]})
+        except Exception as e:
+            log_event("intraday_manage_error", {"error": str(e)})
+
+    schedule.every().monday.at("10:30").do(intraday_growth_manage)
+    schedule.every().tuesday.at("10:30").do(intraday_growth_manage)
+    schedule.every().wednesday.at("10:30").do(intraday_growth_manage)
+    schedule.every().thursday.at("10:30").do(intraday_growth_manage)
+    schedule.every().friday.at("10:30").do(intraday_growth_manage)
+
+    schedule.every().monday.at("13:00").do(intraday_growth_manage)
+    schedule.every().tuesday.at("13:00").do(intraday_growth_manage)
+    schedule.every().wednesday.at("13:00").do(intraday_growth_manage)
+    schedule.every().thursday.at("13:00").do(intraday_growth_manage)
+    schedule.every().friday.at("13:00").do(intraday_growth_manage)
+
     # Weekly review on Saturday morning
     schedule.every().saturday.at("10:00").do(weekly_review)
 
@@ -1134,6 +1157,8 @@ def main():
 
     print("\nScheduled tasks:")
     print("  Mon-Fri 9:35 AM  → Morning scan + trade")
+    print("  Mon-Fri 10:30 AM → Intraday growth manage")
+    print("  Mon-Fri 1:00 PM  → Intraday growth manage")
     print("  Mon-Fri 4:05 PM  → Manage + journal")
     print("  Saturday 10:00 AM → Weekly learning review")
     print("  Daily 8:00 AM    → Heartbeat")

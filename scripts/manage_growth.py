@@ -290,6 +290,19 @@ def main(dry_run=False):
             track["bars_in_profit"] = 0
             if track.get("initial_stop"):
                 track["r_per_share"] = round(avg_entry - track["initial_stop"], 2)
+            # Slippage tracking
+            planned_trigger = track.get("trigger_price", track.get("planned_entry"))
+            planned_limit = track.get("limit_price")
+            if planned_trigger:
+                slippage = avg_entry - planned_trigger
+                slippage_bps = (slippage / planned_trigger) * 10000 if planned_trigger else 0
+                track["slippage"] = {
+                    "planned_trigger": planned_trigger,
+                    "planned_limit": planned_limit,
+                    "actual_fill": avg_entry,
+                    "slippage_dollars": round(slippage, 4),
+                    "slippage_bps": round(slippage_bps, 1),
+                }
             save_tracking(tracking)
 
         # ── BROKER-VS-TRACKING RECONCILIATION (item 16) ──
@@ -548,11 +561,49 @@ def main(dry_run=False):
                                     "error": str(e), "MANUAL_REVIEW": True})
                     send_alert(f"🚨 Growth {symbol}: trailing recovery FAILED", level="error")
             else:
-                actions.append({
-                    "symbol": symbol, "action": "trailing_active",
-                    "price": current_price, "r": round(current_r, 2),
-                    "gain_pct": round((current_price - avg_entry) / avg_entry * 100, 2),
-                })
+                # Coarse trail upgrade at 4R, 5R, 6R thresholds
+                last_upgrade_r = track.get("last_trail_upgrade_r", trailing_tight_threshold_r)
+                upgrade_thresholds = [4.0, 5.0, 6.0, 8.0]
+                next_upgrade = None
+                for t in upgrade_thresholds:
+                    if current_r >= t and last_upgrade_r < t:
+                        next_upgrade = t
+                if next_upgrade:
+                    # Tighten trail: 2.0 ATR at 3-4R, 1.75 at 5R, 1.5 at 6R+
+                    if next_upgrade >= 6.0:
+                        new_trail = 1.5 * atr
+                    elif next_upgrade >= 5.0:
+                        new_trail = 1.75 * atr
+                    else:
+                        new_trail = trailing_tight_mult * atr
+                    # Cancel old and replace
+                    if cancel_order_and_verify(trail_id):
+                        time.sleep(0.3)
+                        try:
+                            resp = submit_trailing_stop(symbol, qty, new_trail)
+                            track["exit_order_id"] = resp.get("id")
+                            track["last_trail_upgrade_r"] = next_upgrade
+                            save_tracking(tracking)
+                            actions.append({"symbol": symbol, "action": "trail_upgraded",
+                                            "r": round(current_r, 2), "threshold": next_upgrade,
+                                            "new_trail": round(new_trail, 2)})
+                            send_alert(f"🎯 GROWTH TRAIL UPGRADE: {symbol} at {current_r:.1f}R → trail=${new_trail:.2f}", level="trade")
+                        except Exception as e:
+                            # Recovery: put old trail back
+                            try:
+                                old_trail = trailing_tight_mult * atr
+                                submit_trailing_stop(symbol, qty, old_trail)
+                            except Exception:
+                                pass
+                            actions.append({"symbol": symbol, "action": "trail_upgrade_failed", "error": str(e)})
+                    else:
+                        actions.append({"symbol": symbol, "action": "trail_upgrade_cancel_failed"})
+                else:
+                    actions.append({
+                        "symbol": symbol, "action": "trailing_active",
+                        "price": current_price, "r": round(current_r, 2),
+                        "gain_pct": round((current_price - avg_entry) / avg_entry * 100, 2),
+                    })
         elif track["phase"] == "initial":
             actions.append({
                 "symbol": symbol, "action": "hold_initial",

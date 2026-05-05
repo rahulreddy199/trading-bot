@@ -305,6 +305,81 @@ def handle_kill(ack, respond):
     send_alert("🛑 Kill switch activated via Slack command", level="error")
 
 
+# --- /summary command ---
+@app.command("/summary")
+def handle_summary(ack, respond):
+    """Full position summary with R, phase, stops, and pending orders."""
+    ack()
+    try:
+        positions = get_positions()
+        lines = []
+
+        # Load tracking for both bots
+        for label, filename in [("Growth", "position_tracking_growth.json"), ("Conservative", "position_tracking.json")]:
+            tracking_path = STATE_DIR / filename
+            if not tracking_path.exists():
+                continue
+            tracking = load_json(tracking_path)
+            if not tracking:
+                continue
+
+            lines.append(f"\n*{label} Bot*")
+            for sym, track in tracking.items():
+                phase = track.get("phase", "?")
+                if phase in ("pending",):
+                    trigger = track.get("trigger_price", 0)
+                    limit = track.get("limit_price", 0)
+                    days_pending = track.get("bars_held", 0)
+                    lines.append(f"  ⏳ *{sym}* PENDING | trigger=${trigger:.2f} limit=${limit:.2f} | {days_pending}d")
+                    continue
+
+                # Find current price from positions
+                pos = next((p for p in positions if p["symbol"] == sym), None)
+                if not pos:
+                    continue
+
+                current = float(pos["current_price"])
+                avg_entry = float(pos["avg_entry_price"])
+                r_per_share = track.get("r_per_share", 1)
+                current_r = (current - avg_entry) / r_per_share if r_per_share > 0 else 0
+                best_r = track.get("best_gain_r", 0)
+                bars = track.get("bars_held", 0)
+                stop = track.get("current_stop") or track.get("initial_stop", 0)
+                setup = track.get("setup_type", "?")
+
+                # Next target
+                if phase == "initial":
+                    next_target = "1.5R (protected)"
+                elif phase == "protected":
+                    next_target = "2.5R (trailing)"
+                elif phase == "trailing":
+                    next_target = "riding 🚀"
+                else:
+                    next_target = "?"
+
+                emoji = "🟢" if current_r > 0 else "🔴"
+                lines.append(
+                    f"  {emoji} *{sym}* | {phase} | {setup}\n"
+                    f"       R={current_r:.2f} (max {best_r:.1f}R) | {bars}d | stop=${stop:.2f} | → {next_target}"
+                )
+
+        if not lines:
+            respond("📭 No tracked positions.")
+            return
+
+        # Add pending orders
+        open_orders = alpaca_get("/v2/orders", params={"status": "open", "limit": 20})
+        buy_orders = [o for o in open_orders if o.get("side") == "buy"]
+        if buy_orders:
+            lines.append("\n*Pending Buy Orders*")
+            for o in buy_orders:
+                lines.append(f"  ⏳ {o['symbol']} | trigger={o.get('stop_price','?')} limit={o.get('limit_price','?')}")
+
+        respond("\n".join(lines))
+    except Exception as e:
+        respond(f"❌ Error: {e}")
+
+
 # --- /resume command ---
 @app.command("/resume")
 def handle_resume(ack, respond, command):

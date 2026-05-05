@@ -137,6 +137,21 @@ def main(dry_run=False):
             print("🛑 KILL SWITCH ACTIVE — no new orders.")
             return
 
+    # Daily drawdown circuit breaker
+    try:
+        account = get_account()
+        equity = float(account["equity"])
+        last_equity = float(account.get("last_equity", equity))
+        daily_change_pct = (equity - last_equity) / last_equity if last_equity > 0 else 0
+        daily_loss_limit = -0.03  # -3% daily loss limit
+        if daily_change_pct <= daily_loss_limit:
+            msg = f"🛑 DAILY CIRCUIT BREAKER: {daily_change_pct*100:.1f}% today. No new entries."
+            print(msg)
+            send_alert(msg, level="error")
+            return
+    except Exception:
+        pass  # Don't block trading on account-fetch failure
+
     strategy = load_growth_strategy()
     candidates_path = STATE_DIR / "candidates_growth.json"
     if not candidates_path.exists():
@@ -333,6 +348,15 @@ def main(dry_run=False):
         r_per_share = candidate["r_per_share"]
         atr = candidate["atr14"]
 
+        # Gap-up filter: skip if current price already too far above trigger
+        gap_max = strategy.get("filters", {}).get("gap_up_max_pct", 0.03)
+        current_price = candidate.get("close", trigger_price)
+        if current_price > trigger_price * (1 + gap_max):
+            plan["skips"].append({"symbol": symbol, "reason": "gap_too_extended",
+                                  "current": round(current_price, 2), "trigger": round(trigger_price, 2),
+                                  "gap_pct": round((current_price / trigger_price - 1) * 100, 2)})
+            continue
+
         if stop_price <= 0 or stop_price >= trigger_price:
             plan["skips"].append({"symbol": symbol, "reason": "invalid_stop"})
             continue
@@ -342,6 +366,17 @@ def main(dry_run=False):
         if qty <= 0:
             plan["skips"].append({"symbol": symbol, "reason": "qty_zero"})
             continue
+
+        # Volatility-targeted sizing scalar
+        vol_sizing = strategy.get("volatility_sizing", {})
+        vol_scalar = 1.0
+        if vol_sizing.get("enabled", False) and atr > 0:
+            atr_pct = atr / trigger_price
+            for bucket in vol_sizing.get("atr_pct_buckets", []):
+                if atr_pct <= bucket["max"]:
+                    vol_scalar = bucket["scalar"]
+                    break
+            qty = max(1, int(qty * vol_scalar))
 
         # Portfolio risk check
         trade_risk = r_per_share * qty
@@ -382,6 +417,8 @@ def main(dry_run=False):
             "stop": round(stop_price, 2),
             "r_per_share": round(r_per_share, 2),
             "risk_dollars": round(trade_risk, 2),
+            "vol_scalar": vol_scalar,
+            "rel_volume": candidate.get("rel_volume", 0),
             "order_id": response.get("id"),
             "client_order_id": response.get("_client_order_id"),
         })
@@ -394,6 +431,7 @@ def main(dry_run=False):
             "current_stop": round(stop_price, 2),
             "r_per_share": round(r_per_share, 2),
             "atr14_at_entry": atr,
+            "atr_pct_at_entry": round(atr / trigger_price, 4) if trigger_price > 0 else 0,
             "setup_type": candidate["setup_type"],
             "phase": "pending",
             "bars_held": 0,
@@ -409,6 +447,11 @@ def main(dry_run=False):
             "candidate_notes": candidate.get("notes", []),
             "setup_high": candidate.get("setup_high"),
             "setup_low": candidate.get("setup_low"),
+            "vol_scalar": vol_scalar,
+            "rel_volume": candidate.get("rel_volume", 0),
+            "sector": candidate.get("sector", "unknown"),
+            "rs_3m": candidate.get("rs_3m", 0),
+            "rs_6m": candidate.get("rs_6m", 0),
         }
         # Find the sell stop leg explicitly (not just legs[0])
         legs = response.get("legs", [])

@@ -52,7 +52,32 @@ The growth bot targets high-momentum names making new highs or pulling back shal
 1. **Initial**: stop at wider of (setup low − 0.2×ATR) or (entry − 2.5×ATR)
 2. **Protected** (at 1.5R): stop moves to entry + 0.1×ATR
 3. **Trailing** (at 2.5R + 5 bars in profit): trailing stop at 3.0×ATR below highest close
-4. **Time stop**: if no profit after 10 bars → exit at market
+4. **Tight trailing** (at 3R+): trail tightens to 2.0×ATR — keeps more profit from big runners
+5. **Time stop**: if no profit after 10 bars → exit at market
+
+### Trail Upgrades at Milestones
+Once trailing is active, the bot progressively tightens the trail as R increases:
+- **3R+**: trail tightens from 3.0×ATR to 2.0×ATR
+- **4R+**: trail tightens to 2.0×ATR (cancel/replace)
+- **5R+**: trail tightens to 1.75×ATR
+- **6R+**: trail tightens to 1.5×ATR
+
+Each upgrade fires only once per threshold and uses cancel-and-verify before replacing.
+
+### Stop Recovery
+If a protective stop expires or disappears from the broker (e.g., due to order expiration), `manage_growth.py` automatically detects and re-places it on the next run. You'll get a Slack alert: "🔧 stop RECOVERED."
+
+### Gap-Up Filter
+Skips entries when the current price is already >3% above the trigger price (configurable via `gap_up_max_pct`). Prevents chasing extended breakouts.
+
+### Daily Circuit Breaker
+If account equity drops >3% in a single day, new entries are automatically halted. Position management continues normally.
+
+### Intraday Position Management
+Growth positions are managed 3× per day (10:30 AM, 1:00 PM, 4:05 PM ET) to catch intraday phase transitions. All runs are fully idempotent.
+
+### Slippage Tracking
+Every fill records planned trigger, planned limit, actual fill price, and slippage in dollars and basis points — fed into the learning module.
 
 ### Correlation Cap
 - 40-day rolling correlation
@@ -244,7 +269,12 @@ python scripts/journal.py
 
 Once `slack_bot.py` is running:
 - `/positions` — view all open positions with P&L
-- `/sell SYMBOL` — force-sell a position (requires confirmation)
+- `/summary` — full status: R, phase, setup, bars held, stop, next target per position
+- `/sell SYMBOL PASSCODE` — force-sell a position (records to trade history for learning)
+- `/status` — bot health check (heartbeats, equity, kill switch status)
+- `/orders` — show all open/pending orders
+- `/kill` — activate kill switch (halt all new entries)
+- `/resume PASSCODE` — deactivate kill switch
 
 ### 5. Deploy on a VPS
 

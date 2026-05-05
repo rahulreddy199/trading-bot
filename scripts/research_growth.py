@@ -453,6 +453,19 @@ def main():
         limit_buffer = strategy["entry"]["limit_buffer_atr"]
         atr = leader["atr14"]
 
+        # --- Relative volume filter (setup-specific thresholds) ---
+        row = df.iloc[-1]
+        avg_vol = float(row["avg_volume_20"]) if not pd.isna(row["avg_volume_20"]) else 0
+        rel_volume = float(row["Volume"]) / avg_vol if avg_vol > 0 else 0
+        setup_type = setup["setup_type"]
+
+        min_rv_key = f"min_rel_volume_{setup_type}"
+        min_rv = strategy.get("filters", {}).get(min_rv_key, 0)
+        if min_rv > 0 and rel_volume < min_rv:
+            rejected.append({"symbol": sym, "score": leader["score"],
+                             "reasons": [f"low_rel_volume_{setup_type}", f"rv={rel_volume:.2f}<{min_rv}"]})
+            continue
+
         trigger_price = setup["setup_high"] + trigger_buffer * atr
         limit_price = trigger_price + limit_buffer * atr
         stop_price = compute_stop(trigger_price, setup["setup_low"], atr, strategy)
@@ -475,6 +488,7 @@ def main():
             "pullback_bars": setup.get("pullback_bars", 0),
             "pullback_depth_atr": setup.get("pullback_depth_atr", 0.0),
             "volume_ratio": setup.get("volume_ratio", 0.0),
+            "rel_volume": round(rel_volume, 2),
             "regime_mode": regime_mode,
             "correlation_blocked": False,
             "notes": setup.get("notes", []),
