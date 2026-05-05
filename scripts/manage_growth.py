@@ -228,6 +228,8 @@ def main(dry_run=False):
     trailing_r = exit_cfg["phase_trailing_r"]           # 2.5R
     trailing_bars_threshold = exit_cfg["phase_trailing_bars_in_profit"]  # 5
     trailing_mult = exit_cfg["trailing_atr_multiplier"]  # 3.0
+    trailing_tight_mult = exit_cfg.get("trailing_tight_atr_multiplier", 2.0)  # tighter trail at high R
+    trailing_tight_threshold_r = exit_cfg.get("trailing_tight_threshold_r", 3.0)  # tighten at 3R+
     protected_buffer = exit_cfg["protected_stop_buffer_atr"]
     time_stop_bars = exit_cfg["time_stop_bars"]          # 10
     time_stop_enabled = exit_cfg["time_stop_enabled"]
@@ -311,6 +313,22 @@ def main(dry_run=False):
                 track["exit_order_type"] = "stop_protected"
             save_tracking(tracking)
             actions.append({"symbol": symbol, "action": "reconciled_to_protected"})
+        elif track["phase"] in ("initial", "protected") and not has_stop_recon and not has_trail_recon:
+            # NO protective order at broker — re-place the stop immediately
+            stop_price = track.get("current_stop") or track.get("initial_stop")
+            if stop_price:
+                try:
+                    resp = submit_stop_order(symbol, qty, stop_price, "recovery_missing")
+                    track["exit_order_id"] = resp.get("id")
+                    track["exit_order_type"] = f"stop_{track['phase']}"
+                    save_tracking(tracking)
+                    actions.append({"symbol": symbol, "action": "stop_recovered",
+                                    "phase": track["phase"], "stop": stop_price})
+                    send_alert(f"🔧 Growth {symbol}: stop RECOVERED at ${stop_price:.2f} (was missing!)", level="warning")
+                except Exception as e:
+                    actions.append({"symbol": symbol, "action": "stop_recovery_failed",
+                                    "error": str(e), "MANUAL_REVIEW": True})
+                    send_alert(f"🚨 Growth {symbol}: stop recovery FAILED — UNPROTECTED!", level="error")
 
         # Bars held (once per day, idempotent)
         today = today_str()
@@ -456,15 +474,18 @@ def main(dry_run=False):
             time.sleep(0.5)
 
             trail_amount = trailing_mult * atr
+            if current_r >= trailing_tight_threshold_r:
+                trail_amount = trailing_tight_mult * atr
             try:
                 resp = submit_trailing_stop(symbol, qty, trail_amount)
                 track["phase"] = "trailing"
                 track["exit_order_id"] = resp.get("id")
                 track["exit_order_type"] = "trailing_stop"
                 save_tracking(tracking)
+                tight_label = " (TIGHT)" if current_r >= trailing_tight_threshold_r else ""
                 actions.append({"symbol": symbol, "action": "trailing_activated",
-                                "trail": round(trail_amount, 2), "r": round(current_r, 2)})
-                send_alert(f"🚀 GROWTH TRAILING: {symbol} at {current_r:.1f}R, trail=${trail_amount:.2f}", level="trade")
+                                "trail": round(trail_amount, 2), "r": round(current_r, 2), "tight": current_r >= trailing_tight_threshold_r})
+                send_alert(f"🚀 GROWTH TRAILING{tight_label}: {symbol} at {current_r:.1f}R, trail=${trail_amount:.2f}", level="trade")
             except Exception as e:
                 # CRITICAL: old stop cancelled but trailing failed — recreate protected stop
                 try:
@@ -514,6 +535,8 @@ def main(dry_run=False):
             has_trail, trail_id = has_trailing_stop(symbol, fresh_orders)
             if not has_trail:
                 trail_amount = trailing_mult * atr
+                if current_r >= trailing_tight_threshold_r:
+                    trail_amount = trailing_tight_mult * atr
                 try:
                     resp = submit_trailing_stop(symbol, qty, trail_amount)
                     track["exit_order_id"] = resp.get("id")

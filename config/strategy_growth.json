@@ -89,6 +89,8 @@
     "phase_trailing_r": 2.5,
     "phase_trailing_bars_in_profit": 5,
     "trailing_atr_multiplier": 3.0,
+    "trailing_tight_atr_multiplier": 2.0,
+    "trailing_tight_threshold_r": 3.0,
     "time_stop_bars": 10,
     "time_stop_enabled": true
   },

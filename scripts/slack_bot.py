@@ -41,6 +41,7 @@ from common import (
     alpaca_get,
     alpaca_post,
     get_env,
+    load_json,
     now_iso,
     save_json,
     send_alert,
@@ -102,6 +103,57 @@ def handle_positions(ack, respond):
         respond(f"❌ Error fetching positions: {e}")
 
 
+def _record_manual_sell(symbol, qty, avg_entry, exit_price, pnl, order_id, client_order_id):
+    """Record manual sell in tracking + trade history for learning module."""
+    now = now_iso()
+    date_str = datetime.now(MARKET_TZ).strftime("%Y-%m-%d")
+
+    # Update position tracking (try both growth and conservative)
+    for tracking_file in ["position_tracking_growth.json", "position_tracking.json"]:
+        tracking_path = STATE_DIR / tracking_file
+        if not tracking_path.exists():
+            continue
+        tracking = load_json(tracking_path)
+        if symbol in tracking:
+            track = tracking[symbol]
+            # Record to trade history
+            entry_price = track.get("actual_entry", track.get("planned_entry", avg_entry))
+            r_per_share = track.get("r_per_share", 1)
+            r_captured = (exit_price - entry_price) / r_per_share if r_per_share else 0
+
+            trade_record = {
+                "symbol": symbol,
+                "setup_type": track.get("setup_type", "unknown"),
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "qty": qty,
+                "pnl": pnl,
+                "r_captured": round(r_captured, 2),
+                "r_per_share": r_per_share,
+                "phase_at_exit": track.get("phase", "unknown"),
+                "exit_reason": "manual_sell_slack",
+                "bars_held": track.get("bars_held", 0),
+                "regime_mode_at_entry": track.get("regime_mode_at_entry", "unknown"),
+                "entry_date": track.get("entry_date", "unknown"),
+                "closed_at": now,
+                "exit_order_id": order_id,
+                "exit_client_order_id": client_order_id,
+            }
+
+            # Append to trade history
+            history_path = STATE_DIR / "trade_history.json"
+            history = load_json(history_path) if history_path.exists() else []
+            if not isinstance(history, list):
+                history = []
+            history.append(trade_record)
+            save_json(history_path, history)
+
+            # Remove from tracking
+            del tracking[symbol]
+            save_json(tracking_path, tracking)
+            break
+
+
 # --- /sell command ---
 @app.command("/sell")
 def handle_sell(ack, respond, command):
@@ -155,6 +207,9 @@ def handle_sell(ack, respond, command):
         }
         resp = alpaca_post("/v2/orders", payload)
         order_id = resp.get("id", "unknown")
+
+        # --- Record in position tracking and trade history ---
+        _record_manual_sell(symbol, qty, avg_entry, current, unrealized, order_id, client_id)
 
         respond(
             f"✅ *SOLD* {symbol} — {qty} shares at market\n"

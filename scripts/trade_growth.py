@@ -118,7 +118,7 @@ def submit_entry_order(symbol, qty, trigger_price, limit_price, stop_price):
         "type": "stop_limit",
         "stop_price": round(trigger_price, 2),
         "limit_price": round(limit_price, 2),
-        "time_in_force": "day",
+        "time_in_force": "gtc",
         "order_class": "oto",
         "stop_loss": {"stop_price": round(stop_price, 2)},
         "client_order_id": client_id,

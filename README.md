@@ -1,28 +1,84 @@
 # AI Swing Trading Bot
 
-An autonomous, Claude-powered swing trading bot that scans for trend-following pullback setups, places orders via Alpaca, manages positions with a three-phase exit system, and learns from its own performance over time.
+An autonomous, Claude-powered swing trading system with **two strategies**: a conservative pullback bot and an aggressive growth/momentum bot. Both scan for setups, place orders via Alpaca, manage positions with phased exits, and learn from performance over time.
 
-## What This Does
+## Two Bots, One System
 
-- **Scans 62 liquid stocks & ETFs** across 8 sectors for pullback entries in confirmed uptrends
-- **Market regime filter**: only trades when SPY + QQQ are above their 50-day and 200-day SMAs
-- **VIX regime awareness**: automatically reduces risk when VIX > 30
-- **Breadth filter**: uses RSP (equal-weight S&P 500) as a market health proxy
-- **Ranks candidates** by 6-month relative strength vs SPY (top 20% only)
-- **Requires confirmation candles**: hammer, bullish engulfing, or morning star patterns
-- **Places stop-limit orders** via Alpaca with attached stop-loss (OTO orders)
-- **Three-phase exit system**: initial stop → breakeven at 1R → trailing stop at 2R
-- **Autonomous orchestration**: Claude AI runs the daily workflow, sends alerts, and reviews performance weekly
-- **Self-tuning**: analyzes trade history and adjusts strategy parameters within strict guardrails
-- **Daily backups**: local + optional S3 for disaster recovery
+| | **Conservative Bot** | **Growth Bot** |
+|---|---|---|
+| **Style** | Trend pullback + confirmation | Momentum breakout + continuation |
+| **Universe** | 62 symbols across 8 sectors | 27 high-beta growth names |
+| **Risk/trade** | 0.5% equity | 0.75% equity |
+| **Max positions** | 5 | 5 |
+| **Entry** | Pullback to 20 SMA + confirmation candle | Breakout near 20/55-day highs |
+| **Setups** | Hammer, engulfing, morning star | Breakout, shallow pullback, continuation |
+| **Exit phases** | Initial → breakeven (1R) → trail (2R) | Initial → protected (1.5R) → trail (2.5R) |
+| **Trailing stop** | 3.0 × ATR | 3.0 × ATR |
+| **Time stop** | None | 10 bars without profit → exit |
+| **Cash reserve** | 25% (full risk) | 5% (full risk) |
 
-## Strategy Summary
+---
+
+## Growth Bot — Strategy Detail
+
+The growth bot targets high-momentum names making new highs or pulling back shallowly in strong uptrends.
+
+### Setups
+
+| Setup | Entry Condition |
+|-------|----------------|
+| **Breakout** | Price within 2% of 20-day or 55-day high, above all key SMAs |
+| **Shallow Pullback** | Pulled back < 1.5 ATR from recent high, still above SMA 20 & 50 |
+| **Continuation** | ≤ 3 bar pullback, green close, still above SMA 20 |
+
+### Ranking
+- 50% weight: 3-month relative strength vs SPY
+- 30% weight: 6-month relative strength vs SPY
+- 20% weight: trend strength (distance above 200 SMA, capped at 15%)
+- Only top 25% of scanned universe qualifies
+
+### Risk Management (Growth)
+
+| Parameter | Full Risk | Reduced Risk |
+|-----------|-----------|--------------|
+| Risk per trade | 0.75% | 0.4% |
+| Max positions | 5 | 3 |
+| Max portfolio risk | 3% | 1.5% |
+| Max per symbol | 25% | 20% |
+| Cash reserve | 5% | 10% |
+
+### Exit System (Growth)
+
+1. **Initial**: stop at wider of (setup low − 0.2×ATR) or (entry − 2.5×ATR)
+2. **Protected** (at 1.5R): stop moves to entry + 0.1×ATR
+3. **Trailing** (at 2.5R + 5 bars in profit): trailing stop at 3.0×ATR below highest close
+4. **Time stop**: if no profit after 10 bars → exit at market
+
+### Correlation Cap
+- 40-day rolling correlation
+- Blocks entry if candidate is > 0.85 correlated with 2+ existing positions
+
+### Growth Watchlist (27 Symbols)
+
+| Sector | Symbols |
+|--------|---------|
+| **ETFs** | SPY, QQQ, IWM, SMH |
+| **Technology** | NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP |
+| **Communication** | NFLX |
+| **Consumer** | TSLA |
+| **Materials** | FCX, NUE |
+
+---
+
+## Conservative Bot — Strategy Detail
+
+The conservative bot trades confirmed pullbacks in broad uptrends with strict confirmation requirements.
+
+### Strategy Summary
 
 | Parameter | Value |
 |-----------|-------|
 | **Universe** | 62 symbols — 14 ETFs + 48 stocks across 8 sectors |
-| **Timeframe** | Daily candles |
-| **Direction** | Long-only (v1) |
 | **Regime filter** | SPY & QQQ both above 50-day AND 200-day SMA |
 | **Breadth filter** | RSP above 50-day SMA (mapped to 0-100 score) |
 | **VIX filter** | VIX > 30 → forced reduced risk mode |
@@ -33,22 +89,19 @@ An autonomous, Claude-powered swing trading bot that scans for trend-following p
 | **Exit phases** | Initial → breakeven at 1R → trailing at 2R (3.0×ATR trail) |
 | **Earnings** | No entries within 7 days of earnings |
 
-## Risk Management
+### Risk Management (Conservative)
 
-| Parameter | Full Risk Mode | Reduced Risk Mode |
-|-----------|---------------|-------------------|
-| Risk per trade | 0.5% of equity (conservative start) | 0.5% of equity |
-| Max open positions | 5 | 4 |
-| Max allocation per symbol | 15% of equity | 15% of equity |
-| Max total portfolio risk | 3% | 3% |
+| Parameter | Full Risk | Reduced Risk |
+|-----------|-----------|--------------|
+| Risk per trade | 0.5% | 0.5% |
+| Max positions | 5 | 4 |
+| Max portfolio risk | 3% | 3% |
 | Cash reserve | 25% | 40% |
-| Max ATR as % of price | 6% | 6% |
+| Max ATR % | 6% | 6% |
 
-**Sector limits** prevent overconcentration: Technology 55%, Financials/Healthcare/Industrials 35%, Consumer/Communication 30%, Energy 25%, Materials 20%.
+**Sector limits**: Technology 55%, Financials/Healthcare/Industrials 35%, Consumer/Communication 30%, Energy 25%, Materials 20%.
 
-**Circuit breaker**: if portfolio drawdown exceeds 15%, all new entries are halted automatically.
-
-## Watchlist (62 Symbols)
+### Conservative Watchlist (62 Symbols)
 
 | Sector | Symbols |
 |--------|---------|
@@ -63,6 +116,8 @@ An autonomous, Claude-powered swing trading bot that scans for trend-following p
 | **Energy** | XOM, CVX, SLB |
 | **Materials** | FCX, NUE |
 
+---
+
 ## How The Bot Works
 
 ### Daily Cycle (Fully Autonomous)
@@ -73,45 +128,69 @@ An autonomous, Claude-powered swing trading bot that scans for trend-following p
 | **9:35 AM** | 🌅 **Morning run**: scan watchlist → filter candidates → place stop-limit orders |
 | **4:05 PM** | 🌆 **Afternoon run**: manage positions → update performance → write journal |
 | **5:00 PM** | 💾 **Daily backup**: local + S3 (if configured) |
-| **Saturday 10 AM** | 📊 **Weekly review**: analyze performance → propose parameter tweaks → apply within guardrails |
+| **Saturday 10 AM** | 📊 **Weekly review**: analyze performance → propose parameter tweaks |
+
+### Running a Specific Bot
+
+```bash
+# Growth bot only
+python scripts/orchestrator.py morning growth
+python scripts/orchestrator.py afternoon growth
+
+# Conservative bot only
+python scripts/orchestrator.py morning conservative
+python scripts/orchestrator.py afternoon conservative
+
+# Both bots (default)
+python scripts/orchestrator.py morning
+python scripts/orchestrator.py afternoon
+```
 
 ### Three-Phase Exit System
 
-1. **Phase 1 — Initial Stop**: stop at entry risk level. If price closes below 50-day SMA within 3 bars → early invalidation exit.
-2. **Phase 2 — Breakeven**: when profit reaches 1R, stop moves to entry + 0.1×ATR. Free trade.
-3. **Phase 3 — Trailing**: when profit reaches 2R, trailing stop activates at 3.0×ATR. Stop only moves up. This lets winners run to 5R, 6R, 7R+.
+**Conservative:**
+1. Initial stop → Breakeven at 1R → Trailing at 2R (3.0×ATR)
+
+**Growth:**
+1. Initial stop → Protected at 1.5R → Trailing at 2.5R (3.0×ATR) + time stop at 10 bars
 
 ### Self-Learning System
 
-The bot learns from its own trades:
 - `learning.py` analyzes win rate, avg R, exit reasons, and profit factor
 - Proposes parameter adjustments based on statistical patterns
-- Claude reviews proposals against guardrails before applying
-- **Safety**: min 30 trades before any tuning, max 2 parameters changed per week, bounded step sizes, strategy snapshots before every change, one-command rollback
+- **Safety**: min 30 trades before any tuning, max 2 parameters changed per week, bounded step sizes, strategy snapshots before every change
 
 ## Project Structure
 
 ```
 config/
-  strategy.json          # All strategy parameters
-  watchlist.json         # 62 symbols with sectors
-  guardrails.json        # Safety bounds for auto-tuning
+  strategy.json            # Conservative bot parameters
+  strategy_growth.json     # Growth bot parameters
+  watchlist.json           # Conservative watchlist (62 symbols)
+  watchlist_growth.json    # Growth watchlist (27 symbols)
+  guardrails.json          # Safety bounds for auto-tuning
 scripts/
-  orchestrator.py        # Claude-powered autonomous agent (the brain)
-  research.py            # Market scan + candidate selection
-  trade.py               # Order placement via Alpaca
-  manage.py              # Three-phase position management
-  learning.py            # Performance analysis + tuning proposals
-  strategy_manager.py    # Safe parameter changes with snapshots
-  journal.py             # Daily journal writer
-  performance.py         # Performance metrics calculator
-  backtest.py            # Historical backtester
-  common.py              # Shared utilities (API, sizing, alerts)
-  backup.sh              # Local + S3 backup script
-  run_daily.sh           # Manual cron wrapper (legacy)
-state/                   # Runtime state (auto-populated)
-journal/                 # Daily journals (auto-populated)
-prompts/                 # Prompt templates
+  orchestrator.py          # Claude-powered autonomous agent (the brain)
+  research.py              # Conservative: market scan + candidate selection
+  research_growth.py       # Growth: momentum scan + candidate selection
+  trade.py                 # Conservative: order placement
+  trade_growth.py          # Growth: order placement
+  manage.py                # Conservative: position management
+  manage_growth.py         # Growth: position management
+  learning.py              # Performance analysis + tuning proposals
+  strategy_manager.py      # Safe parameter changes with snapshots
+  journal.py               # Daily journal writer
+  performance.py           # Performance metrics calculator
+  slack_bot.py             # Slack command interface (/positions, /sell)
+  backtest.py              # Historical backtester
+  backtest_growth.py       # Growth bot backtester
+  common.py                # Shared utilities (API, sizing, alerts)
+  backup.sh                # Local + S3 backup script
+  run_daily.sh             # Manual cron wrapper (legacy)
+state/                     # Runtime state (auto-populated)
+journal/                   # Daily journals (auto-populated)
+prompts/                   # Prompt templates
+growthBot/                 # Growth bot design docs
 ```
 
 ## Quick Start
@@ -133,8 +212,9 @@ ALPACA_BASE_URL=https://paper-api.alpaca.markets
 # For AI orchestration (optional — runs in direct mode without it)
 ANTHROPIC_API_KEY=your_anthropic_key
 
-# For alerts (optional)
-ALERT_WEBHOOK_URL=https://hooks.slack.com/services/...
+# For Slack alerts + commands (optional)
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
 
 # For cloud backups (optional)
 S3_BACKUP_BUCKET=my-trading-bot-backups
@@ -146,38 +226,43 @@ ALLOW_LIVE_TRADING=false
 ### 3. Run the bot
 
 ```bash
-# Option A: Persistent autonomous bot (recommended)
+# Persistent autonomous bot (recommended)
 python scripts/orchestrator.py
 
-# Option B: Test individual runs
-python scripts/orchestrator.py morning     # Run morning scan + trade
-python scripts/orchestrator.py afternoon   # Run manage + journal
-python scripts/orchestrator.py weekly      # Run learning review
+# Single bot run
+python scripts/orchestrator.py morning growth
+python scripts/orchestrator.py afternoon growth
 
-# Option C: Run scripts manually
-python scripts/research.py
-python scripts/trade.py
-python scripts/manage.py
+# Run scripts manually
+python scripts/research_growth.py
+python scripts/trade_growth.py
+python scripts/manage_growth.py
 python scripts/journal.py
 ```
 
-### 4. Deploy on a VPS (recommended for 24/7 operation)
+### 4. Slack Commands
+
+Once `slack_bot.py` is running:
+- `/positions` — view all open positions with P&L
+- `/sell SYMBOL` — force-sell a position (requires confirmation)
+
+### 5. Deploy on a VPS
+
 ```bash
-# On your VPS (Ubuntu/Debian):
-git clone <repo> && cd trading-agent-starter
+git clone <repo> && cd trading-bot
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # Edit with your keys
 
-# Run as a systemd service:
+# Run as systemd service:
 sudo tee /etc/systemd/system/trading-bot.service << EOF
 [Unit]
 Description=Trading Bot
 After=network.target
 
 [Service]
-WorkingDirectory=/path/to/trading-agent-starter
-ExecStart=/path/to/trading-agent-starter/venv/bin/python scripts/orchestrator.py
+WorkingDirectory=/path/to/trading-bot
+ExecStart=/path/to/trading-bot/venv/bin/python scripts/orchestrator.py
 Restart=always
 User=$USER
 
@@ -185,25 +270,21 @@ User=$USER
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl enable trading-bot
-sudo systemctl start trading-bot
+sudo systemctl enable trading-bot && sudo systemctl start trading-bot
 ```
 
 ## Backtest Results
 
-Over Jan 2024 – May 2026 (28 months):
+### Conservative Bot (Jan 2024 – May 2026)
 
 | Metric | Value |
 |--------|-------|
 | Total Return | +30.66% |
 | Total Trades | 85 |
 | Win Rate | 52.9% |
-| Avg R-Multiple | 0.56R |
 | Profit Factor | 2.00 |
-| Best Trade | +7.2R |
-| Worst Trade | -2.0R |
+| Avg R-Multiple | 0.56R |
 | Max Drawdown | -6.70% |
-| Avg Hold Time | 27 days |
 
 ## Cost Estimates
 
@@ -212,62 +293,46 @@ Over Jan 2024 – May 2026 (28 months):
 | Cloud VPS (Hetzner/DigitalOcean) | $4-7 |
 | Claude API (~8 calls/day) | $2-3 |
 | Alpaca paper trading | Free |
-| Slack/Discord alerts | Free |
+| Slack alerts | Free |
 | S3 backups | ~$0.01 |
 | **Total** | **~$7-10/month** |
 
-Monthly API spending is capped at $10 (configurable in `guardrails.json`). If budget is exceeded, the bot continues operating in direct mode without AI orchestration.
-
 ## Safety & Guardrails
 
-- **Paper trading by default** — live trading requires explicit env var acknowledgement
-- **Kill switch (file-based)** — create `state/KILL_SWITCH` to instantly halt all new entries without code edits. Remove the file to resume.
-- **Kill switch (config-based)** — set `kill_switch: true` in guardrails.json to halt all tuning
-- **Self-tuning disabled by default** — `tuning_enabled: false` in guardrails.json. Must be manually enabled after paper validation confirms fills match expectations
-- **Idempotency guard** — trade.py blocks duplicate runs on the same day (won't double-place orders if triggered twice)
-- **Stale data protection** — trade.py refuses to execute if research data isn't from today
-- **Drawdown circuit breaker** — halts all new entries if drawdown exceeds 15%
-- **VIX override** — forces reduced risk mode when VIX > 30
-- **Auto-tuning bounds** — every parameter has min/max/step limits; changes are snapshotted and reversible
+- **Paper trading by default** — live trading requires explicit env var
+- **Kill switch** — create `state/KILL_SWITCH` to instantly halt all entries
+- **Drawdown circuit breaker** — halts entries if drawdown exceeds 15%
+- **VIX override** — forces reduced risk when VIX > 30
+- **Self-tuning disabled by default** — must be manually enabled after paper validation
+- **Idempotency guard** — won't double-place orders if triggered twice
+- **Stale data protection** — refuses to execute if research data isn't from today
+- **Correlation cap** (growth bot) — blocks concentrated correlated bets
+- **Time stop** (growth bot) — exits dead positions after 10 bars
 - **No averaging down, no revenge trading, no extended hours, no holding through earnings**
+
+## Pre-Live Checklist
+
+- [ ] Paper burn-in: 4+ weeks with zero state/execution bugs
+- [ ] Verify OTO → trailing stop transitions on real paper positions
+- [ ] Restart recovery test: kill mid-session, restart, confirm state intact
+- [ ] Stale order cleanup verified (auto-cancellation after 2 days)
+- [ ] Broker reconciliation: compare tracking files vs Alpaca positions
+- [ ] Kill switch test: create/remove `state/KILL_SWITCH`
+- [ ] Duplicate run test: run trade.py twice, confirm second is blocked
+- [ ] Upgrade to Alpaca paid market data plan before live
+- [ ] Keep tuning OFF until 30+ trades match paper expectations
 
 ## Data Sources
 
 | Data Need | Source | Fallback |
 |-----------|--------|----------|
-| Candidate screening (SMA, ATR, pullback) | Alpaca bars (if subscribed) | yfinance (prior-day close) |
-| Order placement & fills | Alpaca API (broker) | None — broker is authoritative |
-| Position & account data | Alpaca API (broker) | None — broker is authoritative |
+| Candidate screening | Alpaca bars (if subscribed) | yfinance (prior-day close) |
+| Order placement & fills | Alpaca API (broker) | None — authoritative |
+| Position & account data | Alpaca API (broker) | None — authoritative |
 | VIX level | yfinance | Assumes "elevated" if unavailable |
 | Breadth proxy (RSP) | yfinance | Defaults to neutral (50) |
-| Earnings calendar | yfinance | Fails open (no blackout applied) |
 
-**Note:** yfinance is used for screening only (prior-day closes). All execution-critical data comes directly from Alpaca. For production, upgrade to Alpaca's paid market data plan (Algo Trader Plus) to get full SIP data and eliminate yfinance dependency without strategy changes, assuming the Alpaca provider switch is validated in paper first.
-
-## Pre-Live Checklist
-
-Before deploying with real capital, complete all items:
-
-- [ ] **Paper burn-in**: 4+ weeks with zero unresolved state or execution bugs
-- [ ] **OTO → trailing stop flow**: verify manage.py handles 1R (breakeven) and 2R (trailing) transitions correctly on real paper positions
-- [ ] **Restart recovery**: kill orchestrator mid-session, restart, confirm state is intact
-- [ ] **Stale order cleanup**: let orders sit unfilled for 2+ days, verify auto-cancellation
-- [ ] **Broker reconciliation**: compare `position_tracking.json` vs Alpaca positions weekly
-- [ ] **Kill switch test**: create `state/KILL_SWITCH`, confirm bot halts entries, remove file, confirm it resumes
-- [ ] **Duplicate run test**: run trade.py twice in a row, confirm second run is blocked
-- [ ] **Trade reconstruction**: pick any closed trade, reconstruct it fully from `order_plan.json` + `trade_history.json`
-- [ ] **Data source upgrade**: upgrade to Alpaca's paid market data plan before live trading
-- [ ] **Tuning stays OFF**: keep `tuning_enabled: false` until 30+ live trades match paper expectations
-
-## Dependencies
-
-- `pandas` / `numpy` — data analysis
-- `yfinance` — historical price data (free)
-- `requests` — Alpaca REST API
-- `anthropic` — Claude AI for orchestration
-- `schedule` — task scheduling
-- `boto3` — S3 backups (optional)
-- `python-dotenv` — environment variable management
+**Note:** yfinance is used for screening only (prior-day closes). All execution-critical data comes from Alpaca. For production, upgrade to Alpaca's paid market data plan to get full SIP real-time data.
 
 ## Disclaimer
 
