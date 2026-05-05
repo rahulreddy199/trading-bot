@@ -1,0 +1,26 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# State files (generated at runtime)
+state/*.json
+state/*.csv
+!state/.gitkeep
+
+# Journal entries (generated at runtime)
+journal/*.md
+journal/*.log
+!journal/.gitkeep
+
+# Strategy snapshots (generated at runtime)
+config/strategy_history/
+
+# Backups (generated at runtime)
+backups/
+
+# OS
+.DS_Store
+.idea/
+

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+    macOS launchd service for the trading bot orchestrator.
+
+    SETUP:
+    1. Edit WorkingDirectory and ProgramArguments paths below to match your install location.
+    2. Copy to ~/Library/LaunchAgents/:
+         cp config/com.tradingbot.orchestrator.plist ~/Library/LaunchAgents/
+    3. Load:
+         launchctl load ~/Library/LaunchAgents/com.tradingbot.orchestrator.plist
+    4. To stop:
+         launchctl unload ~/Library/LaunchAgents/com.tradingbot.orchestrator.plist
+    -->
+    <key>Label</key>
+    <string>com.tradingbot.orchestrator</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/rkanala/Downloads/trading-agent-starter 2</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/rkanala/Downloads/trading-agent-starter 2/venv/bin/python</string>
+        <string>/Users/rkanala/Downloads/trading-agent-starter 2/scripts/orchestrator.py</string>
+    </array>
+
+    <!-- Restart automatically if the process dies -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait 30 seconds before restarting after a crash -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Start when loaded (i.e., on login/boot) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/rkanala/Downloads/trading-agent-starter 2/state/orchestrator_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/rkanala/Downloads/trading-agent-starter 2/state/orchestrator_stderr.log</string>
+
+    <!-- Environment variables (override if needed; .env is loaded by the script) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+

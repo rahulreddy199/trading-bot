@@ -1,0 +1,52 @@
+{
+  "symbols": [
+    { "ticker": "SPY",  "enabled": true, "type": "ETF",   "sector": "Broad Market" },
+    { "ticker": "IWM",  "enabled": true, "type": "ETF",   "sector": "Broad Market" },
+    { "ticker": "MDY",  "enabled": true, "type": "ETF",   "sector": "Broad Market" },
+
+    { "ticker": "XLK",  "enabled": true, "type": "ETF",   "sector": "Technology" },
+    { "ticker": "XLI",  "enabled": true, "type": "ETF",   "sector": "Industrials" },
+    { "ticker": "XLF",  "enabled": true, "type": "ETF",   "sector": "Financial Services" },
+    { "ticker": "XLV",  "enabled": true, "type": "ETF",   "sector": "Healthcare" },
+    { "ticker": "XLE",  "enabled": true, "type": "ETF",   "sector": "Energy" },
+    { "ticker": "XLB",  "enabled": true, "type": "ETF",   "sector": "Materials" },
+
+    { "ticker": "AAPL", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "MSFT", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "NVDA", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "AVGO", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "ANET", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "PANW", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "NOW",  "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "SNPS", "enabled": true, "type": "stock", "sector": "Technology" },
+
+    { "ticker": "LLY",  "enabled": true, "type": "stock", "sector": "Healthcare" },
+    { "ticker": "ISRG", "enabled": true, "type": "stock", "sector": "Healthcare" },
+    { "ticker": "TMO",  "enabled": true, "type": "stock", "sector": "Healthcare" },
+    { "ticker": "ABT",  "enabled": true, "type": "stock", "sector": "Healthcare" },
+
+    { "ticker": "JPM",  "enabled": true, "type": "stock", "sector": "Financial Services" },
+    { "ticker": "V",    "enabled": true, "type": "stock", "sector": "Financial Services" },
+    { "ticker": "MA",   "enabled": true, "type": "stock", "sector": "Financial Services" },
+    { "ticker": "GS",   "enabled": true, "type": "stock", "sector": "Financial Services" },
+    { "ticker": "BLK",  "enabled": true, "type": "stock", "sector": "Financial Services" },
+
+    { "ticker": "CAT",  "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "GE",   "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "URI",  "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "ETN",  "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "PWR",  "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "DE",   "enabled": true, "type": "stock", "sector": "Industrials" },
+
+    { "ticker": "NFLX", "enabled": true, "type": "stock", "sector": "Communication" },
+    { "ticker": "TMUS", "enabled": true, "type": "stock", "sector": "Communication" },
+    { "ticker": "SPOT", "enabled": true, "type": "stock", "sector": "Communication" },
+
+    { "ticker": "XOM",  "enabled": true, "type": "stock", "sector": "Energy" },
+    { "ticker": "CVX",  "enabled": true, "type": "stock", "sector": "Energy" },
+    { "ticker": "SLB",  "enabled": true, "type": "stock", "sector": "Energy" },
+
+    { "ticker": "FCX",  "enabled": true, "type": "stock", "sector": "Materials" },
+    { "ticker": "NUE",  "enabled": true, "type": "stock", "sector": "Materials" }
+  ]
+}

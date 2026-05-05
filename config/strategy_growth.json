@@ -1,0 +1,110 @@
+{
+  "version": "1.0",
+  "name": "growth_momentum_v1",
+  "description": "Aggressive growth/momentum swing trading bot",
+
+  "benchmarks": ["SPY", "QQQ"],
+  "timeframe": "1d",
+
+  "indicators": {
+    "ema_fast": 10,
+    "sma_fast": 20,
+    "sma_mid": 50,
+    "sma_slow": 200,
+    "atr_period": 14,
+    "high_20d": 20,
+    "high_55d": 55,
+    "volume_avg_period": 20
+  },
+
+  "ranking": {
+    "rs_3m_weight": 0.50,
+    "rs_6m_weight": 0.30,
+    "trend_strength_weight": 0.20,
+    "trend_strength_cap_pct": 0.15,
+    "top_percentile": 25
+  },
+
+  "regime": {
+    "full_risk": {
+      "description": "Both SPY and QQQ above 50-day SMA",
+      "risk_per_trade": 0.0075,
+      "max_open_positions": 5,
+      "max_total_portfolio_risk_pct": 0.03,
+      "max_alloc_fraction_per_symbol": 0.25,
+      "cash_reserve_pct": 0.05
+    },
+    "reduced_risk": {
+      "description": "Only one of SPY/QQQ above 50-day SMA",
+      "risk_per_trade": 0.004,
+      "max_open_positions": 3,
+      "max_total_portfolio_risk_pct": 0.015,
+      "max_alloc_fraction_per_symbol": 0.20,
+      "cash_reserve_pct": 0.10
+    },
+    "risk_off": {
+      "description": "Both SPY and QQQ below 50-day SMA",
+      "allow_new_entries": false
+    }
+  },
+
+  "setups": {
+    "breakout": {
+      "enabled": true,
+      "high_period": 20,
+      "near_high_pct": 0.02,
+      "volume_confirmation_ratio": 1.2,
+      "require_volume_confirmation": false
+    },
+    "continuation": {
+      "enabled": true,
+      "max_pullback_bars": 3,
+      "require_above_sma20": true,
+      "require_green_close": true
+    },
+    "shallow_pullback": {
+      "enabled": true,
+      "max_depth_atr": 1.5,
+      "require_above_sma20": true,
+      "require_above_sma50": true
+    }
+  },
+
+  "entry": {
+    "order_type": "stop_limit",
+    "trigger_buffer_atr": 0.05,
+    "limit_buffer_atr": 0.15,
+    "stale_order_cancel_days": 2
+  },
+
+  "stop": {
+    "method": "wider_of_two",
+    "setup_low_buffer_atr": 0.2,
+    "atr_stop_multiplier": 2.5
+  },
+
+  "exit": {
+    "phase_protected_r": 1.5,
+    "protected_stop_buffer_atr": 0.1,
+    "phase_trailing_r": 2.5,
+    "phase_trailing_bars_in_profit": 5,
+    "trailing_atr_multiplier": 3.0,
+    "time_stop_bars": 10,
+    "time_stop_enabled": true
+  },
+
+  "correlation_cap": {
+    "enabled": true,
+    "lookback_days": 40,
+    "threshold": 0.85,
+    "max_correlated_positions": 2,
+    "fail_open_on_data_error": true
+  },
+
+  "filters": {
+    "min_price": 20,
+    "min_avg_dollar_volume": 25000000,
+    "max_atr_percent": 0.08
+  }
+}
+

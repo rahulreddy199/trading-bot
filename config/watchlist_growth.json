@@ -1,0 +1,33 @@
+{
+  "symbols": [
+    { "ticker": "SPY",  "enabled": true, "type": "ETF",   "sector": "Broad Market" },
+    { "ticker": "QQQ",  "enabled": true, "type": "ETF",   "sector": "Technology" },
+    { "ticker": "IWM",  "enabled": true, "type": "ETF",   "sector": "Broad Market" },
+    { "ticker": "SMH",  "enabled": true, "type": "ETF",   "sector": "Technology" },
+
+    { "ticker": "NVDA", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "AMD",  "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "AVGO", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "ANET", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "META", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "AMZN", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "MSFT", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "AAPL", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "GOOGL","enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "NFLX", "enabled": true, "type": "stock", "sector": "Communication" },
+    { "ticker": "PLTR", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "TSLA", "enabled": true, "type": "stock", "sector": "Consumer" },
+    { "ticker": "MU",   "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "CRM",  "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "NOW",  "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "PANW", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "CRWD", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "SNOW", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "TTD",  "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "UBER", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "SHOP", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "FCX",  "enabled": true, "type": "stock", "sector": "Materials" },
+    { "ticker": "NUE",  "enabled": true, "type": "stock", "sector": "Materials" }
+  ]
+}
+

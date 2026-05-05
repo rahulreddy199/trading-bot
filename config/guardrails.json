@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "description": "Safety guardrails for autonomous strategy tuning",
+  "min_trades_before_tuning": 30,
+  "tuning_cooldown_weeks": 2,
+  "max_parameters_changed_per_cycle": 2,
+  "require_consecutive_underperformance_weeks": 3,
+  "parameters": {
+    "risk_per_trade": {
+      "path": "breadth_modes.full_risk.risk_per_trade",
+      "baseline": 0.005,
+      "min": 0.005,
+      "max": 0.02,
+      "max_step": 0.002
+    },
+    "risk_per_trade_reduced": {
+      "path": "breadth_modes.reduced_risk.risk_per_trade",
+      "baseline": 0.005,
+      "min": 0.003,
+      "max": 0.01,
+      "max_step": 0.001
+    },
+    "trailing_atr_multiplier": {
+      "path": "trailing_atr_multiplier",
+      "baseline": 3.0,
+      "min": 2.0,
+      "max": 4.0,
+      "max_step": 0.3
+    },
+    "atr_stop_multiplier": {
+      "path": "atr_stop_multiplier",
+      "baseline": 2.0,
+      "min": 1.5,
+      "max": 3.0,
+      "max_step": 0.25
+    },
+    "pullback_days_max": {
+      "path": "pullback_days_max",
+      "baseline": 12,
+      "min": 5,
+      "max": 15,
+      "max_step": 2
+    },
+    "pullback_max_distance_from_sma20_pct": {
+      "path": "pullback_max_distance_from_sma20_pct",
+      "baseline": 0.07,
+      "min": 0.04,
+      "max": 0.12,
+      "max_step": 0.02
+    },
+    "reward_to_risk": {
+      "path": "reward_to_risk",
+      "baseline": 2.0,
+      "min": 1.5,
+      "max": 3.0,
+      "max_step": 0.25
+    }
+  },
+  "tuning_enabled": false,
+  "tuning_enabled_note": "Set to true only after 30+ paper trades confirm fills match expectations",
+  "kill_switch": false,
+  "max_monthly_api_spend_usd": 10.0,
+  "drawdown_circuit_breaker": {
+    "max_drawdown_pct": 15.0,
+    "action": "risk_off",
+    "alert": true,
+    "description": "If portfolio drawdown exceeds this threshold, halt all new entries and alert"
+  }
+}
+

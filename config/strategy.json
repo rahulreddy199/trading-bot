@@ -1,0 +1,84 @@
+{
+  "version": "2.0",
+  "name": "swing_v2_breadth_pullback_confirmation",
+  "benchmarks": [
+    "SPY",
+    "QQQ"
+  ],
+  "breadth_proxy": "RSP",
+  "timeframe": "1d",
+  "sma_fast": 20,
+  "sma_mid": 50,
+  "sma_slow": 200,
+  "atr_period": 14,
+  "breadth_modes": {
+    "full_risk": {
+      "min_breadth": 60,
+      "risk_per_trade": 0.005,
+      "max_open_positions": 7
+    },
+    "reduced_risk": {
+      "min_breadth": 40,
+      "risk_per_trade": 0.005,
+      "max_open_positions": 6
+    },
+    "risk_off": {
+      "max_breadth": 40,
+      "allow_new_entries": false
+    }
+  },
+  "breadth_freeze_days_note": "reserved for future use — not currently enforced",
+  "breadth_freeze_days": 2,
+  "relative_strength_lookback_days": 126,
+  "min_relative_strength_percentile": 80,
+  "pullback_days_min": 2,
+  "pullback_days_max": 12,
+  "pullback_low_must_hold_sma50": true,
+  "pullback_max_distance_from_sma20_pct": 0.07,
+  "pullback_min_distance_from_sma20_pct": -0.03,
+  "pullback_volume_ratio_max": 1.5,
+  "confirmation_candles": [
+    "hammer",
+    "bullish_engulfing",
+    "morning_star"
+  ],
+  "entry_order_type": "stop_limit",
+  "entry_trigger_buffer_atr": 0.05,
+  "entry_limit_buffer_atr": 0.15,
+  "stale_order_cancel_days": 2,
+  "stop_method": "wider_of_two",
+  "atr_stop_multiplier": 2.0,
+  "candle_low_stop_atr_buffer": 0.1,
+  "breakeven_buffer_atr": 0.1,
+  "reward_to_risk": 2.0,
+  "trailing_atr_multiplier": 3.0,
+  "early_invalidation_bars": 3,
+  "max_alloc_fraction_per_symbol": 0.15,
+  "max_total_portfolio_risk_pct": 0.03,
+  "cash_buffer_pct": 0.005,
+  "max_atr_percent": 0.06,
+  "sector_limits": {
+    "Technology": 0.55,
+    "Financial Services": 0.35,
+    "Healthcare": 0.35,
+    "Industrials": 0.35,
+    "Consumer": 0.30,
+    "Communication": 0.30,
+    "Energy": 0.25,
+    "Materials": 0.20,
+    "default": 0.30
+  },
+  "correlation_cap": {
+    "enabled": true,
+    "lookback_days": 40,
+    "threshold": 0.80,
+    "max_correlated_positions": 2,
+    "fail_open_on_data_error": true
+  },
+  "cash_reserve_pct_full": 0.25,
+  "cash_reserve_pct_reduced": 0.40,
+  "min_price": 20,
+  "min_avg_dollar_volume": 25000000,
+  "earnings_blackout_days": 7,
+  "allow_extended_hours": false
+}
