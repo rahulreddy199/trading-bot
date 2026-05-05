@@ -13,7 +13,7 @@ An autonomous, Claude-powered swing trading system with **two strategies**: a co
 | **Entry** | Pullback to 20 SMA + confirmation candle | Breakout near 20/55-day highs |
 | **Setups** | Hammer, engulfing, morning star | Breakout, shallow pullback, continuation |
 | **Exit phases** | Initial → breakeven (1R) → trail (2R) | Initial → protected (1.5R) → trail (2.5R) |
-| **Trailing stop** | 3.0 × ATR | 3.0 × ATR |
+| **Trailing stop** | 3.0 × ATR | 3.0 × ATR (tightens at milestones) |
 | **Time stop** | None | 10 bars without profit → exit |
 | **Cash reserve** | 25% (full risk) | 5% (full risk) |
 
@@ -25,11 +25,11 @@ The growth bot targets high-momentum names making new highs or pulling back shal
 
 ### Setups
 
-| Setup | Entry Condition |
-|-------|----------------|
-| **Breakout** | Price within 2% of 20-day or 55-day high, above all key SMAs |
-| **Shallow Pullback** | Pulled back < 1.5 ATR from recent high, still above SMA 20 & 50 |
-| **Continuation** | ≤ 3 bar pullback, green close, still above SMA 20 |
+| Setup | Entry Condition | Min Relative Volume |
+|-------|----------------|---------------------|
+| **Breakout** | Price within 2% of 20-day or 55-day high, above all key SMAs | 1.5× avg |
+| **Shallow Pullback** | Pulled back < 1.5 ATR from recent high, still above SMA 20 & 50 | 1.0× avg |
+| **Continuation** | ≤ 3 bar pullback, green close, still above SMA 20 | 1.2× avg |
 
 ### Ranking
 - 50% weight: 3-month relative strength vs SPY
@@ -47,10 +47,23 @@ The growth bot targets high-momentum names making new highs or pulling back shal
 | Max per symbol | 25% | 20% |
 | Cash reserve | 5% | 10% |
 
+### Volatility-Targeted Position Sizing
+
+Position size is scaled by a volatility bucket system based on ATR as a percentage of price:
+
+| ATR % of Price | Size Scalar | Effect |
+|----------------|-------------|--------|
+| ≤ 2.5% | 1.0× | Full size (low vol) |
+| ≤ 4.0% | 0.85× | Slightly reduced |
+| ≤ 6.0% | 0.70× | Moderate reduction |
+| > 6.0% | 0.50× | Half size (high vol) |
+
+This prevents oversized positions in volatile names even when the per-trade risk budget allows it.
+
 ### Exit System (Growth)
 
 1. **Initial**: stop at wider of (setup low − 0.2×ATR) or (entry − 2.5×ATR)
-2. **Protected** (at 1.5R): stop moves to entry + 0.1×ATR
+2. **Protected** (at 1.5R): stop moves to entry − 0.1×ATR
 3. **Trailing** (at 2.5R + 5 bars in profit): trailing stop at 3.0×ATR below highest close
 4. **Tight trailing** (at 3R+): trail tightens to 2.0×ATR — keeps more profit from big runners
 5. **Time stop**: if no profit after 10 bars → exit at market
@@ -61,17 +74,39 @@ Once trailing is active, the bot progressively tightens the trail as R increases
 - **4R+**: trail tightens to 2.0×ATR (cancel/replace)
 - **5R+**: trail tightens to 1.75×ATR
 - **6R+**: trail tightens to 1.5×ATR
+- **8R+**: trail tightens to 1.5×ATR (re-fires upgrade check)
 
 Each upgrade fires only once per threshold and uses cancel-and-verify before replacing.
 
-### Stop Recovery
-If a protective stop expires or disappears from the broker (e.g., due to order expiration), `manage_growth.py` automatically detects and re-places it on the next run. You'll get a Slack alert: "🔧 stop RECOVERED."
+### Stop Recovery & Reconciliation
+
+The growth bot has multiple layers of position protection:
+
+1. **Broker-vs-tracking reconciliation**: On every manage run, the bot compares broker state (stop orders, trailing stops) against local tracking phase and auto-corrects mismatches:
+   - Broker has trailing but tracking says "protected" → sync tracking up to "trailing"
+   - Broker has stop but tracking says "trailing" → sync tracking down to "protected"
+   - No protective order exists → immediately re-place stop
+
+2. **Exit-pending recovery**: If a submitted exit order is later canceled/expired/rejected by the broker, the bot reverts the position to "initial" phase for continued management (not left in limbo).
+
+3. **Failure recovery patterns**: Every phase transition (initial→protected, protected→trailing, time stop) follows a "cancel old → place new → on failure restore old" pattern. If the new order fails after the old was cancelled, the old stop is immediately re-created.
+
+4. **Metadata reconstruction**: If tracking data is incomplete (e.g., after a restart), `manage_growth.py` reconstructs missing `r_per_share` and ATR from multiple sources in priority order:
+   - `last_orders_growth.json` (closest to executed trade)
+   - `order_plan_growth.json`
+   - `candidates_growth.json`
+   - ATR fallback estimate (flags for `MANUAL_REVIEW`)
+
+5. **Stop validation**: Before placing any recovery stop, validates that stop price > 0, stop < current price, and qty > 0.
 
 ### Gap-Up Filter
 Skips entries when the current price is already >3% above the trigger price (configurable via `gap_up_max_pct`). Prevents chasing extended breakouts.
 
 ### Daily Circuit Breaker
 If account equity drops >3% in a single day, new entries are automatically halted. Position management continues normally.
+
+### Portfolio Risk Budget
+Before each new entry, the bot calculates total portfolio risk (sum of r_per_share × qty for all open positions). New entries are blocked if adding the trade would exceed the `max_total_portfolio_risk_pct` (3% in full risk mode). Risk per existing position uses a fallback chain: tracked data → last_orders → order_plan → conservative 2.5% estimate.
 
 ### Intraday Position Management
 Growth positions are managed 3× per day (10:30 AM, 1:00 PM, 4:05 PM ET) to catch intraday phase transitions. All runs are fully idempotent.
@@ -82,6 +117,7 @@ Every fill records planned trigger, planned limit, actual fill price, and slippa
 ### Correlation Cap
 - 40-day rolling correlation
 - Blocks entry if candidate is > 0.85 correlated with 2+ existing positions
+- Configurable fail-open/fail-closed on data errors
 
 ### Growth Watchlist (27 Symbols)
 
