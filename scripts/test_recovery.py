@@ -529,6 +529,95 @@ def test_pending_cancel_limbo():
     return result
 
 
+def test_pure_decision_time_stop():
+    """Pure decision: time stop fires when bars >= threshold and R < 0.5."""
+    result = TestResult("pure_decision_time_stop")
+    from growth.decisions import decide_phase_action
+
+    track = {"phase": "initial", "r_per_share": 5.0, "atr14_at_entry": 3.0,
+             "bars_held": 11, "bars_in_profit": 2, "best_price": 101}
+    exit_cfg = {"phase_protected_r": 1.5, "phase_trailing_r": 2.5,
+                "phase_trailing_bars_in_profit": 5, "trailing_atr_multiplier": 3.0,
+                "trailing_tight_atr_multiplier": 2.0, "trailing_tight_threshold_r": 3.0,
+                "protected_stop_buffer_atr": 0.1, "time_stop_bars": 10,
+                "time_stop_enabled": True}
+
+    # Price at 101 with entry 100, r_per_share 5 → R = 0.2 (< 0.5)
+    decision = decide_phase_action(track, 101.0, 100.0, 10, exit_cfg)
+    if decision["action"] == "time_stop":
+        result.ok("Time stop correctly triggered at 11 bars, 0.2R")
+    else:
+        result.fail(f"Expected time_stop, got: {decision}")
+    return result
+
+
+def test_pure_decision_protected():
+    """Pure decision: move to protected at 1.5R+."""
+    result = TestResult("pure_decision_protected")
+    from growth.decisions import decide_phase_action
+
+    track = {"phase": "initial", "r_per_share": 5.0, "atr14_at_entry": 3.0,
+             "bars_held": 3, "bars_in_profit": 2, "best_price": 110}
+    exit_cfg = {"phase_protected_r": 1.5, "phase_trailing_r": 2.5,
+                "phase_trailing_bars_in_profit": 5, "trailing_atr_multiplier": 3.0,
+                "trailing_tight_atr_multiplier": 2.0, "trailing_tight_threshold_r": 3.0,
+                "protected_stop_buffer_atr": 0.1, "time_stop_bars": 10,
+                "time_stop_enabled": True}
+
+    # Price 108, entry 100, R=1.6
+    decision = decide_phase_action(track, 108.0, 100.0, 10, exit_cfg)
+    if decision["action"] == "move_to_protected" and decision["stop_price"] == 99.7:
+        result.ok("Protected transition at 1.6R with correct stop price")
+    else:
+        result.fail(f"Expected move_to_protected, got: {decision}")
+    return result
+
+
+def test_pure_decision_trailing():
+    """Pure decision: move to trailing at 2.5R+."""
+    result = TestResult("pure_decision_trailing")
+    from growth.decisions import decide_phase_action
+
+    track = {"phase": "protected", "r_per_share": 5.0, "atr14_at_entry": 3.0,
+             "bars_held": 6, "bars_in_profit": 4, "best_price": 115}
+    exit_cfg = {"phase_protected_r": 1.5, "phase_trailing_r": 2.5,
+                "phase_trailing_bars_in_profit": 5, "trailing_atr_multiplier": 3.0,
+                "trailing_tight_atr_multiplier": 2.0, "trailing_tight_threshold_r": 3.0,
+                "protected_stop_buffer_atr": 0.1, "time_stop_bars": 10,
+                "time_stop_enabled": True}
+
+    # Price 113, entry 100, R=2.6
+    decision = decide_phase_action(track, 113.0, 100.0, 10, exit_cfg)
+    if decision["action"] == "move_to_trailing" and decision["trail_amount"] == 9.0:
+        result.ok("Trailing at 2.6R with 3.0×ATR trail")
+    else:
+        result.fail(f"Expected move_to_trailing, got: {decision}")
+    return result
+
+
+def test_pure_decision_trail_upgrade():
+    """Pure decision: trail upgrade at 5R threshold."""
+    result = TestResult("pure_decision_trail_upgrade")
+    from growth.decisions import decide_phase_action
+
+    track = {"phase": "trailing", "r_per_share": 5.0, "atr14_at_entry": 3.0,
+             "bars_held": 12, "bars_in_profit": 10, "best_price": 130,
+             "last_trail_upgrade_r": 3.0}
+    exit_cfg = {"phase_protected_r": 1.5, "phase_trailing_r": 2.5,
+                "phase_trailing_bars_in_profit": 5, "trailing_atr_multiplier": 3.0,
+                "trailing_tight_atr_multiplier": 2.0, "trailing_tight_threshold_r": 3.0,
+                "protected_stop_buffer_atr": 0.1, "time_stop_bars": 10,
+                "time_stop_enabled": True}
+
+    # Price 126, entry 100, R=5.2 → should upgrade at 5.0 threshold
+    decision = decide_phase_action(track, 126.0, 100.0, 10, exit_cfg)
+    if decision["action"] == "trail_upgrade" and decision["threshold"] == 5.0:
+        result.ok(f"Trail upgrade at 5R with trail={decision['new_trail']}")
+    else:
+        result.fail(f"Expected trail_upgrade at 5.0, got: {decision}")
+    return result
+
+
 ALL_TESTS = [
     test_double_run_trade,
     test_double_run_manage,
@@ -547,6 +636,10 @@ ALL_TESTS = [
     test_broker_trailing_local_protected,
     test_no_protective_order_detected,
     test_pending_cancel_limbo,
+    test_pure_decision_time_stop,
+    test_pure_decision_protected,
+    test_pure_decision_trailing,
+    test_pure_decision_trail_upgrade,
 ]
 
 

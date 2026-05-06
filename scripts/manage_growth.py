@@ -1,5 +1,5 @@
 """
-Growth Bot V1 — Position manager.
+Growth Bot V1 — Position manager (orchestrator).
 
 Phases:
   1. INITIAL: Hold original stop. Wait for 1.5R.
@@ -10,9 +10,7 @@ Time stop: Exit after 10 bars if no meaningful progress (< 0.5R).
 """
 import json
 import time
-import hashlib
 import sys
-from datetime import datetime
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -24,8 +22,6 @@ from common import (
     CONFIG_DIR,
     ACTIVE_ORDER_STATUSES,
     alpaca_get,
-    alpaca_post,
-    cancel_order_and_verify,
     enforce_live_guardrails,
     get_positions,
     JobLock,
@@ -38,79 +34,25 @@ from common import (
     today_str,
     write_heartbeat,
 )
+from growth.decisions import decide_phase_action, compute_current_r, compute_best_r
+from growth.broker_exec import (
+    get_open_orders_fresh,
+    get_stop_orders_for_symbol,
+    has_trailing_stop,
+    submit_stop_order,
+    submit_trailing_stop,
+    submit_market_sell,
+    cancel_all_stops_verified,
+    validate_stop_before_submit,
+    execute_cancel_and_replace,
+)
+from growth.recovery import try_reconstruct_metadata
 
+
+# ── State I/O ──
 
 def load_growth_strategy():
     return json.loads((CONFIG_DIR / "strategy_growth.json").read_text())
-
-
-def get_open_orders_fresh():
-    return alpaca_get("/v2/orders", params={"status": "open", "limit": 100})
-
-
-def get_stop_orders_for_symbol(symbol, open_orders):
-    return [o for o in open_orders
-            if o.get("symbol") == symbol and o.get("side") == "sell"
-            and o.get("type") == "stop" and o.get("status") in ACTIVE_ORDER_STATUSES]
-
-
-def has_trailing_stop(symbol, open_orders):
-    for o in open_orders:
-        if (o.get("symbol") == symbol and o.get("side") == "sell"
-                and o.get("type") == "trailing_stop" and o.get("status") in ACTIVE_ORDER_STATUSES):
-            return True, o.get("id")
-    return False, None
-
-
-def gen_client_id(symbol, phase):
-    date_str = datetime.now(MARKET_TZ).strftime("%Y%m%d")
-    key = f"{date_str}_growth_{phase}_{symbol}"
-    h = hashlib.sha256(key.encode()).hexdigest()[:8]
-    return f"growth_{phase}_{symbol}_{date_str}_{h}"
-
-
-def submit_stop_order(symbol, qty, stop_price, phase="stop", dry_run=False):
-    if dry_run:
-        print(f"  [DRY RUN] Would submit stop: {symbol} qty={qty} stop=${stop_price:.2f} phase={phase}")
-        return {"id": "dry_run", "client_order_id": gen_client_id(symbol, phase)}
-    client_id = gen_client_id(symbol, phase)
-    payload = {
-        "symbol": symbol, "qty": str(qty), "side": "sell",
-        "type": "stop", "stop_price": round(stop_price, 2),
-        "time_in_force": "gtc", "client_order_id": client_id,
-    }
-    resp = alpaca_post("/v2/orders", payload)
-    resp.setdefault("client_order_id", client_id)
-    return resp
-
-
-def submit_trailing_stop(symbol, qty, trail_price, dry_run=False):
-    if dry_run:
-        print(f"  [DRY RUN] Would submit trailing: {symbol} qty={qty} trail=${trail_price:.2f}")
-        return {"id": "dry_run", "client_order_id": gen_client_id(symbol, "trail")}
-    client_id = gen_client_id(symbol, "trail")
-    payload = {
-        "symbol": symbol, "qty": str(qty), "side": "sell",
-        "type": "trailing_stop", "trail_price": str(round(trail_price, 2)),
-        "time_in_force": "gtc", "client_order_id": client_id,
-    }
-    resp = alpaca_post("/v2/orders", payload)
-    resp.setdefault("client_order_id", client_id)
-    return resp
-
-
-def submit_market_sell(symbol, qty, dry_run=False):
-    if dry_run:
-        print(f"  [DRY RUN] Would submit market sell: {symbol} qty={qty}")
-        return {"id": "dry_run", "client_order_id": gen_client_id(symbol, "exit")}
-    client_id = gen_client_id(symbol, "exit")
-    payload = {
-        "symbol": symbol, "qty": str(qty), "side": "sell",
-        "type": "market", "time_in_force": "day", "client_order_id": client_id,
-    }
-    resp = alpaca_post("/v2/orders", payload)
-    resp.setdefault("client_order_id", client_id)
-    return resp
 
 
 def load_tracking():
@@ -122,107 +64,10 @@ def load_tracking():
 
 def save_tracking(tracking):
     save_json(state_path("growth", "position_tracking.json"), tracking)
-    # Legacy compat
     save_json(STATE_DIR / "position_tracking_growth.json", tracking)
 
 
-def cancel_all_stops_verified(symbol, fresh_orders):
-    """Cancel all stop/trailing orders for symbol with verification. Returns True if all confirmed cancelled."""
-    stops = get_stop_orders_for_symbol(symbol, fresh_orders)
-    trailing = [o for o in fresh_orders
-                if o.get("symbol") == symbol and o.get("side") == "sell"
-                and o.get("type") == "trailing_stop" and o.get("status") in ACTIVE_ORDER_STATUSES]
-    all_cancelled = True
-    for order in stops + trailing:
-        if not cancel_order_and_verify(order["id"]):
-            all_cancelled = False
-    return all_cancelled
-
-
-def validate_stop_before_submit(symbol, stop_price, current_price, qty):
-    """Sanity-check stop parameters before placing a recovery/protective stop.
-    Returns (ok, reason) tuple."""
-    if stop_price is None or stop_price <= 0:
-        return False, "stop_price_invalid"
-    if stop_price >= current_price:
-        return False, "stop_above_current_price"
-    if qty is None or qty <= 0:
-        return False, "qty_invalid"
-    return True, "ok"
-
-
-def try_reconstruct_metadata(symbol, track):
-    """Try to reconstruct missing r_per_share/atr from multiple sources.
-    Priority: tracking → last_orders.json → order_plan.json → candidates.json → ATR fallback.
-    """
-    reconstructed = False
-    source = None
-
-    # 1. last_orders_growth.json (closest to actual executed trade)
-    last_orders_path = STATE_DIR / "last_orders_growth.json"
-    if last_orders_path.exists():
-        try:
-            orders = json.loads(last_orders_path.read_text())
-            for o in orders:
-                if o.get("symbol") == symbol:
-                    if track.get("atr14_at_entry") is None and "atr14" in o:
-                        track["atr14_at_entry"] = float(o["atr14"])
-                    if track.get("r_per_share") is None and o.get("r_per_share"):
-                        track["r_per_share"] = float(o["r_per_share"])
-                        source = "last_orders"
-                    break
-        except Exception:
-            pass
-
-    # 2. order_plan_growth.json
-    if track.get("r_per_share") is None:
-        order_plan_path = STATE_DIR / "order_plan_growth.json"
-        if order_plan_path.exists():
-            try:
-                plan = json.loads(order_plan_path.read_text())
-                for o in plan.get("orders", []):
-                    if o.get("symbol") == symbol:
-                        if track.get("r_per_share") is None and o.get("r_per_share"):
-                            track["r_per_share"] = float(o["r_per_share"])
-                            source = "order_plan"
-                        break
-            except Exception:
-                pass
-
-    # 3. candidates_growth.json
-    if track.get("r_per_share") is None or track.get("atr14_at_entry") is None:
-        candidates_path = STATE_DIR / "candidates_growth.json"
-        if candidates_path.exists():
-            try:
-                data = json.loads(candidates_path.read_text())
-                for c in data.get("candidates", []) + data.get("rejected", []):
-                    if c.get("symbol") == symbol:
-                        if track.get("atr14_at_entry") is None and "atr14" in c:
-                            track["atr14_at_entry"] = float(c["atr14"])
-                        if track.get("r_per_share") is None and "r_per_share" in c:
-                            track["r_per_share"] = float(c["r_per_share"])
-                            source = "candidates"
-                        break
-            except Exception:
-                pass
-
-    # 4. ATR fallback estimate (last resort)
-    if track.get("r_per_share") is None and track.get("atr14_at_entry"):
-        track["r_per_share"] = round(2.5 * track["atr14_at_entry"], 2)
-        source = "atr_fallback_estimate"
-        track["r_per_share_estimated"] = True
-        track["MANUAL_REVIEW"] = True
-
-    if source:
-        track["r_per_share_source"] = source
-        if source == "atr_fallback_estimate":
-            print(f"  ⚠️ {symbol}: r_per_share estimated from ATR fallback (MANUAL_REVIEW)")
-        else:
-            print(f"  ℹ️ {symbol}: r_per_share reconstructed from {source}")
-        reconstructed = True
-
-    return reconstructed
-
+# ── Orchestrator ──
 
 def main(dry_run=False):
     enforce_live_guardrails()
@@ -240,16 +85,6 @@ def _run_manage_logic(dry_run, lock):
     positions = get_positions()
     exit_cfg = strategy["exit"]
 
-    protected_r = exit_cfg["phase_protected_r"]        # 1.5R
-    trailing_r = exit_cfg["phase_trailing_r"]           # 2.5R
-    trailing_bars_threshold = exit_cfg["phase_trailing_bars_in_profit"]  # 5
-    trailing_mult = exit_cfg["trailing_atr_multiplier"]  # 3.0
-    trailing_tight_mult = exit_cfg.get("trailing_tight_atr_multiplier", 2.0)  # tighter trail at high R
-    trailing_tight_threshold_r = exit_cfg.get("trailing_tight_threshold_r", 3.0)  # tighten at 3R+
-    protected_buffer = exit_cfg["protected_stop_buffer_atr"]
-    time_stop_bars = exit_cfg["time_stop_bars"]          # 10
-    time_stop_enabled = exit_cfg["time_stop_enabled"]
-
     tracking = load_tracking()
     actions = []
 
@@ -259,6 +94,7 @@ def _run_manage_logic(dry_run, lock):
         avg_entry = float(pos["avg_entry_price"])
         current_price = float(pos["current_price"])
 
+        # Ensure tracking entry exists
         if symbol not in tracking:
             tracking[symbol] = {
                 "planned_entry": avg_entry, "initial_stop": None,
@@ -272,378 +108,435 @@ def _run_manage_logic(dry_run, lock):
 
         track = tracking[symbol]
 
-        # Skip exit_pending — but reconcile if position is actually closed
+        # ── EXIT PENDING: check if exit order resolved ──
         if track.get("phase") == "exit_pending":
-            exit_oid = track.get("exit_order_id")
-            if exit_oid:
-                try:
-                    exit_order = alpaca_get(f"/v2/orders/{exit_oid}")
-                    if exit_order.get("status") == "filled":
-                        # Position closed — will be cleaned up below
-                        actions.append({"symbol": symbol, "action": "exit_confirmed_filled"})
-                    elif exit_order.get("status") in ("canceled", "expired", "rejected"):
-                        # Exit order disappeared but position still exists — recover
-                        track["phase"] = "initial"
-                        track.pop("exit_reason", None)
-                        save_tracking(tracking)
-                        actions.append({"symbol": symbol, "action": "exit_pending_recovered",
-                                        "reason": f"exit_order_{exit_order.get('status')}"})
-                        send_alert(f"⚠️ Growth {symbol}: exit order {exit_order.get('status')}, reverting to initial", level="warning")
-                    else:
-                        actions.append({"symbol": symbol, "action": "exit_pending", "exit_status": exit_order.get("status")})
-                except Exception:
-                    actions.append({"symbol": symbol, "action": "exit_pending", "note": "could_not_check_order"})
-            else:
-                actions.append({"symbol": symbol, "action": "exit_pending", "note": "no_exit_order_id"})
+            actions.append(_handle_exit_pending(symbol, track, tracking))
             continue
 
-        # Pending → initial transition
+        # ── PENDING → INITIAL: fill detected ──
         if track.get("phase") == "pending":
-            track["phase"] = "initial"
-            track["actual_entry"] = avg_entry
-            track["qty"] = qty
-            track["bars_held"] = 0
-            track["bars_in_profit"] = 0
-            if track.get("initial_stop"):
-                track["r_per_share"] = round(avg_entry - track["initial_stop"], 2)
-            # Slippage tracking
-            planned_trigger = track.get("trigger_price", track.get("planned_entry"))
-            planned_limit = track.get("limit_price")
-            if planned_trigger:
-                slippage = avg_entry - planned_trigger
-                slippage_bps = (slippage / planned_trigger) * 10000 if planned_trigger else 0
-                track["slippage"] = {
-                    "planned_trigger": planned_trigger,
-                    "planned_limit": planned_limit,
-                    "actual_fill": avg_entry,
-                    "slippage_dollars": round(slippage, 4),
-                    "slippage_bps": round(slippage_bps, 1),
-                }
+            _handle_pending_to_initial(track, avg_entry, qty)
             save_tracking(tracking)
 
-        # ── BROKER-VS-TRACKING RECONCILIATION (item 16) ──
-        fresh_orders_recon = get_open_orders_fresh()
-        has_trail_recon, trail_id_recon = has_trailing_stop(symbol, fresh_orders_recon)
-        has_stop_recon = bool(get_stop_orders_for_symbol(symbol, fresh_orders_recon))
+        # ── RECONCILIATION: sync tracking phase with broker orders ──
+        recon_action = _reconcile_broker_state(symbol, track, qty, tracking, dry_run)
+        if recon_action:
+            actions.append(recon_action)
 
-        if track["phase"] == "protected" and has_trail_recon:
-            # Broker has trailing but tracking says protected — sync up
-            track["phase"] = "trailing"
-            track["exit_order_id"] = trail_id_recon
-            track["exit_order_type"] = "trailing_stop"
-            save_tracking(tracking)
-            actions.append({"symbol": symbol, "action": "reconciled_to_trailing"})
-        elif track["phase"] == "trailing" and not has_trail_recon and has_stop_recon:
-            # Broker only has regular stop but tracking says trailing — sync down
-            track["phase"] = "protected"
-            stop_orders = get_stop_orders_for_symbol(symbol, fresh_orders_recon)
-            if stop_orders:
-                track["exit_order_id"] = stop_orders[0].get("id")
-                track["exit_order_type"] = "stop_protected"
-            save_tracking(tracking)
-            actions.append({"symbol": symbol, "action": "reconciled_to_protected"})
-        elif track["phase"] in ("initial", "protected") and not has_stop_recon and not has_trail_recon:
-            # NO protective order at broker — re-place the stop immediately
-            stop_price = track.get("current_stop") or track.get("initial_stop")
-            if stop_price:
-                try:
-                    resp = submit_stop_order(symbol, qty, stop_price, "recovery_missing")
-                    track["exit_order_id"] = resp.get("id")
-                    track["exit_order_type"] = f"stop_{track['phase']}"
-                    save_tracking(tracking)
-                    actions.append({"symbol": symbol, "action": "stop_recovered",
-                                    "phase": track["phase"], "stop": stop_price})
-                    send_alert(f"🔧 Growth {symbol}: stop RECOVERED at ${stop_price:.2f} (was missing!)", level="warning")
-                except Exception as e:
-                    actions.append({"symbol": symbol, "action": "stop_recovery_failed",
-                                    "error": str(e), "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: stop recovery FAILED — UNPROTECTED!", level="error")
-
-        # Bars held (once per day, idempotent)
-        today = today_str()
-        if track.get("last_bar_date") != today:
-            track["bars_held"] = track.get("bars_held", 0) + 1
-            # Track actual bars where close > entry (not just "currently green")
-            if current_price > avg_entry:
-                track["bars_in_profit"] = track.get("bars_in_profit", 0) + 1
-            track["last_bar_date"] = today
-
-        # Update best price
+        # ── UPDATE BARS (idempotent per day) ──
+        _update_bars(track, current_price, avg_entry)
         track["best_price"] = max(track.get("best_price", 0), current_price)
 
-        r_per_share = track.get("r_per_share")
-        atr = track.get("atr14_at_entry")
-
-        # Try to reconstruct missing data before skipping
-        if r_per_share is None or atr is None:
+        # ── METADATA RECONSTRUCTION ──
+        if track.get("r_per_share") is None or track.get("atr14_at_entry") is None:
             reconstructed = try_reconstruct_metadata(symbol, track)
-            r_per_share = track.get("r_per_share")
-            atr = track.get("atr14_at_entry")
             if reconstructed:
                 save_tracking(tracking)
                 actions.append({"symbol": symbol, "action": "metadata_reconstructed",
-                                "r_per_share": r_per_share, "atr": atr})
+                                "r_per_share": track.get("r_per_share"), "atr": track.get("atr14_at_entry")})
 
-        if r_per_share is None or atr is None:
+        if track.get("r_per_share") is None or track.get("atr14_at_entry") is None:
             actions.append({"symbol": symbol, "action": "skip", "reason": "missing_r_or_atr",
                             "MANUAL_REVIEW": True})
             send_alert(f"⚠️ Growth {symbol}: missing R/ATR data, position unmanaged", level="warning")
             continue
 
-        current_r = (current_price - avg_entry) / r_per_share if r_per_share > 0 else 0
-        best_r = (track["best_price"] - avg_entry) / r_per_share if r_per_share > 0 else 0
-        track["best_gain_r"] = round(best_r, 2)
+        # Update R tracking
+        r_per_share = track["r_per_share"]
+        current_r = compute_current_r(track, current_price, avg_entry)
+        track["best_gain_r"] = round(compute_best_r(track, avg_entry), 2)
 
-        bars_in_profit = track.get("bars_in_profit", 0)
+        # ── PURE DECISION ──
+        decision = decide_phase_action(track, current_price, avg_entry, qty, exit_cfg)
+        action_type = decision["action"]
 
-        # ── TIME STOP ──
-        if (time_stop_enabled and track["phase"] == "initial"
-                and track["bars_held"] >= time_stop_bars and current_r < 0.5):
-            try:
-                fresh_orders = get_open_orders_fresh()
-                all_cancelled = cancel_all_stops_verified(symbol, fresh_orders)
-                if not all_cancelled:
-                    actions.append({"symbol": symbol, "action": "time_stop_cancel_failed",
-                                    "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: time stop cancel failed, position may have overlapping exits", level="error")
-                    continue
-                time.sleep(0.3)
-                resp = submit_market_sell(symbol, qty)
-                track["phase"] = "exit_pending"
-                track["exit_reason"] = "time_stop"
-                track["exit_order_id"] = resp.get("id")
-                save_tracking(tracking)
-                actions.append({"symbol": symbol, "action": "time_stop_exit",
-                                "bars": track["bars_held"], "r": round(current_r, 2)})
-                send_alert(f"⏰ GROWTH TIME STOP: {symbol} after {track['bars_held']} bars, R={current_r:.2f}", level="warning")
-            except Exception as e:
-                # Market sell failed after canceling stops — recreate protective stop
-                try:
-                    fallback_stop = track.get("current_stop") or track.get("initial_stop")
-                    if fallback_stop:
-                        submit_stop_order(symbol, qty, fallback_stop, "recovery")
-                        actions.append({"symbol": symbol, "action": "time_stop_failed_stop_restored",
-                                        "error": str(e), "restored_stop": fallback_stop})
-                    else:
-                        actions.append({"symbol": symbol, "action": "time_stop_failed_no_fallback",
-                                        "error": str(e), "MANUAL_REVIEW": True})
-                except Exception as e2:
-                    actions.append({"symbol": symbol, "action": "time_stop_failed_recovery_failed",
-                                    "error": str(e), "recovery_error": str(e2), "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: time stop AND recovery FAILED — NAKED POSITION", level="error")
+        # ── EXECUTE DECISION ──
+        if action_type == "time_stop":
+            action = _execute_time_stop(symbol, track, qty, tracking, dry_run)
+            actions.append(action)
             continue
 
-        # ── INITIAL → PROTECTED (at 1.5R) ──
-        if track["phase"] == "initial" and current_r >= protected_r:
-            protected_stop = avg_entry - protected_buffer * atr
-            fresh_orders = get_open_orders_fresh()
-
-            # Cancel old stops with verification
-            all_cancelled = cancel_all_stops_verified(symbol, fresh_orders)
-            if not all_cancelled:
-                actions.append({"symbol": symbol, "action": "protected_cancel_failed",
-                                "MANUAL_REVIEW": True})
-                send_alert(f"🚨 Growth {symbol}: old stop cancel failed at protected transition", level="error")
-                continue
-
-            time.sleep(0.5)
-
-            try:
-                resp = submit_stop_order(symbol, qty, protected_stop, "protected")
-                track["phase"] = "protected"
-                track["current_stop"] = round(protected_stop, 2)
-                track["exit_order_id"] = resp.get("id")
-                track["exit_order_type"] = "stop_protected"
-                save_tracking(tracking)
-                actions.append({"symbol": symbol, "action": "moved_to_protected",
-                                "stop": round(protected_stop, 2), "r": round(current_r, 2)})
-                send_alert(f"🛡️ GROWTH PROTECTED: {symbol} at {current_r:.1f}R, stop=${protected_stop:.2f}", level="trade")
-            except Exception as e:
-                # CRITICAL: old stop cancelled but new one failed — recreate old stop
-                try:
-                    old_stop = track.get("current_stop") or track.get("initial_stop")
-                    if old_stop:
-                        resp = submit_stop_order(symbol, qty, old_stop, "recovery")
-                        track["exit_order_id"] = resp.get("id")
-                        save_tracking(tracking)
-                        actions.append({"symbol": symbol, "action": "protected_failed_stop_restored",
-                                        "error": str(e), "restored_stop": old_stop})
-                    else:
-                        actions.append({"symbol": symbol, "action": "protected_failed_no_fallback",
-                                        "error": str(e), "MANUAL_REVIEW": True})
-                        send_alert(f"🚨 Growth {symbol}: NAKED — protected stop failed, no fallback", level="error")
-                except Exception as e2:
-                    actions.append({"symbol": symbol, "action": "protected_failed_recovery_failed",
-                                    "error": str(e), "recovery_error": str(e2), "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: NAKED POSITION — all stop attempts failed", level="error")
+        elif action_type == "move_to_protected":
+            action = _execute_move_to_protected(
+                symbol, track, qty, avg_entry, decision["stop_price"], tracking, dry_run)
+            actions.append(action)
             continue
 
-        # ── PROTECTED → TRAILING (at 2.5R or 5 bars in profit) ──
-        should_trail = (current_r >= trailing_r) or (bars_in_profit >= trailing_bars_threshold and current_r > 0.5)
-        if track["phase"] == "protected" and should_trail:
-            fresh_orders = get_open_orders_fresh()
-
-            already_trailing, trail_id = has_trailing_stop(symbol, fresh_orders)
-            if already_trailing:
-                track["phase"] = "trailing"
-                track["exit_order_id"] = trail_id
-                track["exit_order_type"] = "trailing_stop"
-                save_tracking(tracking)
-                actions.append({"symbol": symbol, "action": "trailing_exists", "id": trail_id})
-                continue
-
-            # Cancel old stops with verification
-            all_cancelled = cancel_all_stops_verified(symbol, fresh_orders)
-            if not all_cancelled:
-                actions.append({"symbol": symbol, "action": "trailing_cancel_failed",
-                                "MANUAL_REVIEW": True})
-                send_alert(f"🚨 Growth {symbol}: old stop cancel failed at trailing transition", level="error")
-                continue
-
-            time.sleep(0.5)
-
-            trail_amount = trailing_mult * atr
-            if current_r >= trailing_tight_threshold_r:
-                trail_amount = trailing_tight_mult * atr
-            try:
-                resp = submit_trailing_stop(symbol, qty, trail_amount)
-                track["phase"] = "trailing"
-                track["exit_order_id"] = resp.get("id")
-                track["exit_order_type"] = "trailing_stop"
-                save_tracking(tracking)
-                tight_label = " (TIGHT)" if current_r >= trailing_tight_threshold_r else ""
-                actions.append({"symbol": symbol, "action": "trailing_activated",
-                                "trail": round(trail_amount, 2), "r": round(current_r, 2), "tight": current_r >= trailing_tight_threshold_r})
-                send_alert(f"🚀 GROWTH TRAILING{tight_label}: {symbol} at {current_r:.1f}R, trail=${trail_amount:.2f}", level="trade")
-            except Exception as e:
-                # CRITICAL: old stop cancelled but trailing failed — recreate protected stop
-                try:
-                    protected_stop = track.get("current_stop", avg_entry - protected_buffer * atr)
-                    resp = submit_stop_order(symbol, qty, protected_stop, "recovery")
-                    track["exit_order_id"] = resp.get("id")
-                    save_tracking(tracking)
-                    actions.append({"symbol": symbol, "action": "trailing_failed_stop_restored",
-                                    "error": str(e), "restored_stop": protected_stop})
-                except Exception as e2:
-                    actions.append({"symbol": symbol, "action": "trailing_failed_recovery_failed",
-                                    "error": str(e), "recovery_error": str(e2), "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: NAKED POSITION — trailing and recovery failed", level="error")
+        elif action_type == "move_to_trailing":
+            action = _execute_move_to_trailing(
+                symbol, track, qty, avg_entry, decision["trail_amount"],
+                decision.get("tight", False), exit_cfg, tracking, dry_run)
+            actions.append(action)
             continue
 
-        # ── RECOVERY: protected phase but no stop exists ──
-        if track["phase"] == "protected":
-            fresh_orders = get_open_orders_fresh()
-            existing_stops = get_stop_orders_for_symbol(symbol, fresh_orders)
-            if not existing_stops:
-                protected_stop = track.get("current_stop", avg_entry - protected_buffer * atr)
-                ok, reason = validate_stop_before_submit(symbol, protected_stop, current_price, qty)
-                if not ok:
-                    actions.append({"symbol": symbol, "action": "protected_recovery_blocked",
-                                    "reason": reason, "stop": protected_stop, "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: recovery stop blocked ({reason})", level="error")
-                    continue
-                # Check no equivalent active stop already exists (re-check after validation)
-                fresh_orders2 = get_open_orders_fresh()
-                if get_stop_orders_for_symbol(symbol, fresh_orders2):
-                    actions.append({"symbol": symbol, "action": "protected_stop_appeared"})
-                    continue
-                try:
-                    resp = submit_stop_order(symbol, qty, protected_stop, "recovery")
-                    track["exit_order_id"] = resp.get("id")
-                    save_tracking(tracking)
-                    actions.append({"symbol": symbol, "action": "protected_stop_recovered",
-                                    "stop": round(protected_stop, 2)})
-                except Exception as e:
-                    actions.append({"symbol": symbol, "action": "protected_recovery_failed",
-                                    "error": str(e), "MANUAL_REVIEW": True})
-                continue
+        elif action_type == "trail_upgrade":
+            action = _execute_trail_upgrade(
+                symbol, track, qty, decision["new_trail"],
+                decision["threshold"], exit_cfg, tracking, dry_run)
+            actions.append(action)
 
-        # ── RECOVERY: trailing phase but stop missing ──
-        if track["phase"] == "trailing":
-            fresh_orders = get_open_orders_fresh()
-            has_trail, trail_id = has_trailing_stop(symbol, fresh_orders)
-            if not has_trail:
-                trail_amount = trailing_mult * atr
-                if current_r >= trailing_tight_threshold_r:
-                    trail_amount = trailing_tight_mult * atr
-                try:
-                    resp = submit_trailing_stop(symbol, qty, trail_amount)
-                    track["exit_order_id"] = resp.get("id")
-                    save_tracking(tracking)
-                    actions.append({"symbol": symbol, "action": "trailing_recovered"})
-                    send_alert(f"🔧 Growth {symbol}: trailing stop recovered", level="warning")
-                except Exception as e:
-                    actions.append({"symbol": symbol, "action": "trailing_recovery_failed",
-                                    "error": str(e), "MANUAL_REVIEW": True})
-                    send_alert(f"🚨 Growth {symbol}: trailing recovery FAILED", level="error")
-            else:
-                # Coarse trail upgrade at 4R, 5R, 6R thresholds
-                last_upgrade_r = track.get("last_trail_upgrade_r", trailing_tight_threshold_r)
-                upgrade_thresholds = [4.0, 5.0, 6.0, 8.0]
-                next_upgrade = None
-                for t in upgrade_thresholds:
-                    if current_r >= t and last_upgrade_r < t:
-                        next_upgrade = t
-                if next_upgrade:
-                    # Tighten trail: 2.0 ATR at 3-4R, 1.75 at 5R, 1.5 at 6R+
-                    if next_upgrade >= 6.0:
-                        new_trail = 1.5 * atr
-                    elif next_upgrade >= 5.0:
-                        new_trail = 1.75 * atr
-                    else:
-                        new_trail = trailing_tight_mult * atr
-                    # Cancel old and replace
-                    if cancel_order_and_verify(trail_id):
-                        time.sleep(0.3)
-                        try:
-                            resp = submit_trailing_stop(symbol, qty, new_trail)
-                            track["exit_order_id"] = resp.get("id")
-                            track["last_trail_upgrade_r"] = next_upgrade
-                            save_tracking(tracking)
-                            actions.append({"symbol": symbol, "action": "trail_upgraded",
-                                            "r": round(current_r, 2), "threshold": next_upgrade,
-                                            "new_trail": round(new_trail, 2)})
-                            send_alert(f"🎯 GROWTH TRAIL UPGRADE: {symbol} at {current_r:.1f}R → trail=${new_trail:.2f}", level="trade")
-                        except Exception as e:
-                            # Recovery: put old trail back
-                            try:
-                                old_trail = trailing_tight_mult * atr
-                                submit_trailing_stop(symbol, qty, old_trail)
-                            except Exception:
-                                pass
-                            actions.append({"symbol": symbol, "action": "trail_upgrade_failed", "error": str(e)})
-                    else:
-                        actions.append({"symbol": symbol, "action": "trail_upgrade_cancel_failed"})
-                else:
-                    actions.append({
-                        "symbol": symbol, "action": "trailing_active",
-                        "price": current_price, "r": round(current_r, 2),
-                        "gain_pct": round((current_price - avg_entry) / avg_entry * 100, 2),
-                    })
-        elif track["phase"] == "initial":
+        elif action_type == "hold":
             actions.append({
-                "symbol": symbol, "action": "hold_initial",
-                "phase_before": "initial", "phase_after": "initial",
-                "price": current_price, "r": round(current_r, 2),
-                "bars": track["bars_held"], "bars_in_profit": bars_in_profit,
+                "symbol": symbol,
+                "action": f"hold_{decision['phase']}",
+                "price": current_price,
+                "r": decision["current_r"],
+                "bars": decision.get("bars_held", 0),
+                "bars_in_profit": decision.get("bars_in_profit", 0),
                 "current_stop": track.get("current_stop"),
                 "exit_order_id": track.get("exit_order_id"),
-                "target_r": protected_r,
             })
-        elif track["phase"] == "protected":
-            actions.append({
-                "symbol": symbol, "action": "hold_protected",
-                "phase_before": "protected", "phase_after": "protected",
-                "price": current_price, "r": round(current_r, 2),
-                "bars_in_profit": bars_in_profit,
-                "current_stop": track.get("current_stop"),
-                "exit_order_id": track.get("exit_order_id"),
-                "target_r": trailing_r,
-            })
+
+        # ── RECOVERY: check if protective order is missing ──
+        if track["phase"] in ("protected", "trailing") and action_type == "hold":
+            recovery_action = _check_and_recover_missing_stop(
+                symbol, track, qty, current_price, avg_entry, exit_cfg, tracking, dry_run)
+            if recovery_action:
+                actions.append(recovery_action)
+                continue
 
     save_tracking(tracking)
 
-    # Cleanup closed positions
+    # ── CLEANUP: remove closed positions from tracking ──
+    _cleanup_closed(tracking, positions, actions)
+
+    # ── WRITE LOG + HEARTBEAT + RECEIPT ──
+    log = {"bot_name": "growth", "timestamp": now_iso(), "actions": actions}
+    save_json(STATE_DIR / "manage_log_growth.json", log)
+    save_json(state_path("growth", "manage_log.json"), log)
+
+    manual_review_count = sum(1 for a in actions if a.get("MANUAL_REVIEW"))
+    recoveries = sum(1 for a in actions if "recover" in a.get("action", ""))
+    write_heartbeat("manage_growth", "ok", {
+        "bot_name": "growth",
+        "positions": len(positions),
+        "actions": len(actions),
+        "recoveries": recoveries,
+        "manual_review_count": manual_review_count,
+    })
+
+    lock.write_receipt(
+        status="completed",
+        orders_submitted=0,
+        errors=[a.get("error", "") for a in actions if "failed" in a.get("action", "")],
+        warnings=[a.get("symbol", "") for a in actions if a.get("MANUAL_REVIEW")],
+    )
+    log_event("growth", "manage", "job_end", reason_code="JOB_END",
+              extra={"actions": len(actions), "positions": len(positions)})
+
+    print(f"Growth Manage: {len(actions)} actions on {len(positions)} positions")
+
+
+# ── Phase Handlers (thin wrappers that delegate to broker_exec) ──
+
+def _handle_exit_pending(symbol, track, tracking):
+    """Check if an exit_pending order has resolved."""
+    exit_oid = track.get("exit_order_id")
+    if not exit_oid:
+        return {"symbol": symbol, "action": "exit_pending", "note": "no_exit_order_id"}
+    try:
+        exit_order = alpaca_get(f"/v2/orders/{exit_oid}")
+        if exit_order.get("status") == "filled":
+            return {"symbol": symbol, "action": "exit_confirmed_filled"}
+        elif exit_order.get("status") in ("canceled", "expired", "rejected"):
+            track["phase"] = "initial"
+            track.pop("exit_reason", None)
+            save_tracking(tracking)
+            send_alert(f"⚠️ Growth {symbol}: exit order {exit_order.get('status')}, reverting to initial", level="warning")
+            return {"symbol": symbol, "action": "exit_pending_recovered",
+                    "reason": f"exit_order_{exit_order.get('status')}"}
+        else:
+            return {"symbol": symbol, "action": "exit_pending", "exit_status": exit_order.get("status")}
+    except Exception:
+        return {"symbol": symbol, "action": "exit_pending", "note": "could_not_check_order"}
+
+
+def _handle_pending_to_initial(track, avg_entry, qty):
+    """Transition from pending to initial on fill."""
+    track["phase"] = "initial"
+    track["actual_entry"] = avg_entry
+    track["qty"] = qty
+    track["bars_held"] = 0
+    track["bars_in_profit"] = 0
+    if track.get("initial_stop"):
+        track["r_per_share"] = round(avg_entry - track["initial_stop"], 2)
+    # Slippage tracking
+    planned_trigger = track.get("trigger_price", track.get("planned_entry"))
+    planned_limit = track.get("limit_price")
+    if planned_trigger:
+        slippage = avg_entry - planned_trigger
+        slippage_bps = (slippage / planned_trigger) * 10000 if planned_trigger else 0
+        track["slippage"] = {
+            "planned_trigger": planned_trigger,
+            "planned_limit": planned_limit,
+            "actual_fill": avg_entry,
+            "slippage_dollars": round(slippage, 4),
+            "slippage_bps": round(slippage_bps, 1),
+        }
+
+
+def _reconcile_broker_state(symbol, track, qty, tracking, dry_run):
+    """Sync local phase with broker order state."""
+    fresh_orders = get_open_orders_fresh()
+    has_trail, trail_id = has_trailing_stop(symbol, fresh_orders)
+    has_stop = bool(get_stop_orders_for_symbol(symbol, fresh_orders))
+
+    if track["phase"] == "protected" and has_trail:
+        track["phase"] = "trailing"
+        track["exit_order_id"] = trail_id
+        track["exit_order_type"] = "trailing_stop"
+        save_tracking(tracking)
+        return {"symbol": symbol, "action": "reconciled_to_trailing"}
+
+    elif track["phase"] == "trailing" and not has_trail and has_stop:
+        track["phase"] = "protected"
+        stop_orders = get_stop_orders_for_symbol(symbol, fresh_orders)
+        if stop_orders:
+            track["exit_order_id"] = stop_orders[0].get("id")
+            track["exit_order_type"] = "stop_protected"
+        save_tracking(tracking)
+        return {"symbol": symbol, "action": "reconciled_to_protected"}
+
+    elif track["phase"] in ("initial", "protected") and not has_stop and not has_trail:
+        stop_price = track.get("current_stop") or track.get("initial_stop")
+        if stop_price:
+            try:
+                resp = submit_stop_order(symbol, qty, stop_price, "recovery_missing", dry_run=dry_run)
+                track["exit_order_id"] = resp.get("id")
+                track["exit_order_type"] = f"stop_{track['phase']}"
+                save_tracking(tracking)
+                send_alert(f"🔧 Growth {symbol}: stop RECOVERED at ${stop_price:.2f} (was missing!)", level="warning")
+                return {"symbol": symbol, "action": "stop_recovered", "phase": track["phase"], "stop": stop_price}
+            except Exception as e:
+                send_alert(f"🚨 Growth {symbol}: stop recovery FAILED — UNPROTECTED!", level="error")
+                return {"symbol": symbol, "action": "stop_recovery_failed", "error": str(e), "MANUAL_REVIEW": True}
+
+    return None
+
+
+def _update_bars(track, current_price, avg_entry):
+    """Update bars_held and bars_in_profit (once per day, idempotent)."""
+    today = today_str()
+    if track.get("last_bar_date") != today:
+        track["bars_held"] = track.get("bars_held", 0) + 1
+        if current_price > avg_entry:
+            track["bars_in_profit"] = track.get("bars_in_profit", 0) + 1
+        track["last_bar_date"] = today
+
+
+def _execute_time_stop(symbol, track, qty, tracking, dry_run):
+    """Execute time stop: cancel stops → market sell → fallback recovery."""
+    try:
+        fresh_orders = get_open_orders_fresh()
+        all_cancelled = cancel_all_stops_verified(symbol, fresh_orders)
+        if not all_cancelled:
+            send_alert(f"🚨 Growth {symbol}: time stop cancel failed", level="error")
+            return {"symbol": symbol, "action": "time_stop_cancel_failed", "MANUAL_REVIEW": True}
+        time.sleep(0.3)
+        resp = submit_market_sell(symbol, qty, dry_run=dry_run)
+        track["phase"] = "exit_pending"
+        track["exit_reason"] = "time_stop"
+        track["exit_order_id"] = resp.get("id")
+        save_tracking(tracking)
+        send_alert(f"⏰ GROWTH TIME STOP: {symbol} after {track['bars_held']} bars", level="warning")
+        return {"symbol": symbol, "action": "time_stop_exit", "bars": track["bars_held"]}
+    except Exception as e:
+        # Recovery: restore stop
+        fallback_stop = track.get("current_stop") or track.get("initial_stop")
+        if fallback_stop:
+            try:
+                submit_stop_order(symbol, qty, fallback_stop, "recovery", dry_run=dry_run)
+                return {"symbol": symbol, "action": "time_stop_failed_stop_restored",
+                        "error": str(e), "restored_stop": fallback_stop}
+            except Exception as e2:
+                send_alert(f"🚨 Growth {symbol}: time stop AND recovery FAILED — NAKED", level="error")
+                return {"symbol": symbol, "action": "time_stop_failed_recovery_failed",
+                        "error": str(e), "recovery_error": str(e2), "MANUAL_REVIEW": True}
+        return {"symbol": symbol, "action": "time_stop_failed_no_fallback",
+                "error": str(e), "MANUAL_REVIEW": True}
+
+
+def _execute_move_to_protected(symbol, track, qty, avg_entry, stop_price, tracking, dry_run):
+    """Execute initial→protected transition via cancel-and-replace."""
+    fresh_orders = get_open_orders_fresh()
+    fallback = track.get("current_stop") or track.get("initial_stop")
+
+    success, result = execute_cancel_and_replace(
+        symbol, qty, fresh_orders,
+        lambda: submit_stop_order(symbol, qty, stop_price, "protected", dry_run=dry_run),
+        fallback_stop=fallback, dry_run=dry_run,
+    )
+
+    if success:
+        track["phase"] = "protected"
+        track["current_stop"] = round(stop_price, 2)
+        track["exit_order_id"] = result.get("order_id")
+        track["exit_order_type"] = "stop_protected"
+        save_tracking(tracking)
+        r = compute_current_r(track, track.get("best_price", avg_entry), avg_entry)
+        send_alert(f"🛡️ GROWTH PROTECTED: {symbol} stop=${stop_price:.2f}", level="trade")
+        return {"symbol": symbol, "action": "moved_to_protected", "stop": round(stop_price, 2)}
+    else:
+        if result.get("recovered"):
+            track["exit_order_id"] = result.get("recovery_order_id")
+            save_tracking(tracking)
+            return {"symbol": symbol, "action": "protected_failed_stop_restored",
+                    "error": result.get("error"), "restored_stop": result.get("restored_stop")}
+        if result.get("error") == "cancel_failed":
+            send_alert(f"🚨 Growth {symbol}: old stop cancel failed at protected transition", level="error")
+            return {"symbol": symbol, "action": "protected_cancel_failed", "MANUAL_REVIEW": True}
+        send_alert(f"🚨 Growth {symbol}: NAKED — protected stop failed", level="error")
+        return {"symbol": symbol, "action": "protected_failed_no_fallback",
+                "error": result.get("error"), "MANUAL_REVIEW": True}
+
+
+def _execute_move_to_trailing(symbol, track, qty, avg_entry, trail_amount, tight, exit_cfg, tracking, dry_run):
+    """Execute protected→trailing transition via cancel-and-replace."""
+    fresh_orders = get_open_orders_fresh()
+
+    # Already trailing at broker?
+    already_trailing, trail_id = has_trailing_stop(symbol, fresh_orders)
+    if already_trailing:
+        track["phase"] = "trailing"
+        track["exit_order_id"] = trail_id
+        track["exit_order_type"] = "trailing_stop"
+        save_tracking(tracking)
+        return {"symbol": symbol, "action": "trailing_exists", "id": trail_id}
+
+    protected_buffer = exit_cfg["protected_stop_buffer_atr"]
+    atr = track.get("atr14_at_entry", 0)
+    fallback = track.get("current_stop", avg_entry - protected_buffer * atr)
+
+    success, result = execute_cancel_and_replace(
+        symbol, qty, fresh_orders,
+        lambda: submit_trailing_stop(symbol, qty, trail_amount, dry_run=dry_run),
+        fallback_stop=fallback, dry_run=dry_run,
+    )
+
+    if success:
+        track["phase"] = "trailing"
+        track["exit_order_id"] = result.get("order_id")
+        track["exit_order_type"] = "trailing_stop"
+        save_tracking(tracking)
+        tight_label = " (TIGHT)" if tight else ""
+        send_alert(f"🚀 GROWTH TRAILING{tight_label}: {symbol} trail=${trail_amount:.2f}", level="trade")
+        return {"symbol": symbol, "action": "trailing_activated",
+                "trail": round(trail_amount, 2), "tight": tight}
+    else:
+        if result.get("recovered"):
+            track["exit_order_id"] = result.get("recovery_order_id")
+            save_tracking(tracking)
+            return {"symbol": symbol, "action": "trailing_failed_stop_restored",
+                    "error": result.get("error"), "restored_stop": result.get("restored_stop")}
+        if result.get("error") == "cancel_failed":
+            send_alert(f"🚨 Growth {symbol}: old stop cancel failed at trailing transition", level="error")
+            return {"symbol": symbol, "action": "trailing_cancel_failed", "MANUAL_REVIEW": True}
+        send_alert(f"🚨 Growth {symbol}: NAKED — trailing and recovery failed", level="error")
+        return {"symbol": symbol, "action": "trailing_failed_recovery_failed",
+                "error": result.get("error"), "MANUAL_REVIEW": True}
+
+
+def _execute_trail_upgrade(symbol, track, qty, new_trail, threshold, exit_cfg, tracking, dry_run):
+    """Upgrade trailing stop at R milestones."""
+    fresh_orders = get_open_orders_fresh()
+    has_trail, trail_id = has_trailing_stop(symbol, fresh_orders)
+
+    if not has_trail:
+        # No trailing exists — recover it
+        try:
+            atr = track.get("atr14_at_entry", 0)
+            resp = submit_trailing_stop(symbol, qty, new_trail, dry_run=dry_run)
+            track["exit_order_id"] = resp.get("id")
+            save_tracking(tracking)
+            send_alert(f"🔧 Growth {symbol}: trailing stop recovered", level="warning")
+            return {"symbol": symbol, "action": "trailing_recovered"}
+        except Exception as e:
+            send_alert(f"🚨 Growth {symbol}: trailing recovery FAILED", level="error")
+            return {"symbol": symbol, "action": "trailing_recovery_failed",
+                    "error": str(e), "MANUAL_REVIEW": True}
+
+    # Cancel old trail and place tighter one
+    from common import cancel_order_and_verify
+    if cancel_order_and_verify(trail_id):
+        time.sleep(0.3)
+        try:
+            resp = submit_trailing_stop(symbol, qty, new_trail, dry_run=dry_run)
+            track["exit_order_id"] = resp.get("id")
+            track["last_trail_upgrade_r"] = threshold
+            save_tracking(tracking)
+            send_alert(f"🎯 GROWTH TRAIL UPGRADE: {symbol} → trail=${new_trail:.2f}", level="trade")
+            return {"symbol": symbol, "action": "trail_upgraded",
+                    "threshold": threshold, "new_trail": round(new_trail, 2)}
+        except Exception as e:
+            # Recovery: put old-width trail back
+            try:
+                trailing_tight_mult = exit_cfg.get("trailing_tight_atr_multiplier", 2.0)
+                atr = track.get("atr14_at_entry", 0)
+                submit_trailing_stop(symbol, qty, trailing_tight_mult * atr, dry_run=dry_run)
+            except Exception:
+                pass
+            return {"symbol": symbol, "action": "trail_upgrade_failed", "error": str(e)}
+    else:
+        return {"symbol": symbol, "action": "trail_upgrade_cancel_failed"}
+
+
+def _check_and_recover_missing_stop(symbol, track, qty, current_price, avg_entry, exit_cfg, tracking, dry_run):
+    """Check if a protective order is missing and recover it."""
+    fresh_orders = get_open_orders_fresh()
+
+    if track["phase"] == "protected":
+        existing = get_stop_orders_for_symbol(symbol, fresh_orders)
+        if existing:
+            return None
+        protected_buffer = exit_cfg["protected_stop_buffer_atr"]
+        atr = track.get("atr14_at_entry", 0)
+        stop_price = track.get("current_stop", avg_entry - protected_buffer * atr)
+        ok, reason = validate_stop_before_submit(symbol, stop_price, current_price, qty)
+        if not ok:
+            send_alert(f"🚨 Growth {symbol}: recovery stop blocked ({reason})", level="error")
+            return {"symbol": symbol, "action": "protected_recovery_blocked",
+                    "reason": reason, "MANUAL_REVIEW": True}
+        # Double-check
+        fresh2 = get_open_orders_fresh()
+        if get_stop_orders_for_symbol(symbol, fresh2):
+            return {"symbol": symbol, "action": "protected_stop_appeared"}
+        try:
+            resp = submit_stop_order(symbol, qty, stop_price, "recovery", dry_run=dry_run)
+            track["exit_order_id"] = resp.get("id")
+            save_tracking(tracking)
+            return {"symbol": symbol, "action": "protected_stop_recovered", "stop": round(stop_price, 2)}
+        except Exception as e:
+            return {"symbol": symbol, "action": "protected_recovery_failed",
+                    "error": str(e), "MANUAL_REVIEW": True}
+
+    elif track["phase"] == "trailing":
+        has_trail, _ = has_trailing_stop(symbol, fresh_orders)
+        if has_trail:
+            return None
+        atr = track.get("atr14_at_entry", 0)
+        trailing_mult = exit_cfg["trailing_atr_multiplier"]
+        trailing_tight_mult = exit_cfg.get("trailing_tight_atr_multiplier", 2.0)
+        trailing_tight_threshold_r = exit_cfg.get("trailing_tight_threshold_r", 3.0)
+        current_r = compute_current_r(track, current_price, avg_entry)
+        trail_amount = trailing_mult * atr
+        if current_r >= trailing_tight_threshold_r:
+            trail_amount = trailing_tight_mult * atr
+        try:
+            resp = submit_trailing_stop(symbol, qty, trail_amount, dry_run=dry_run)
+            track["exit_order_id"] = resp.get("id")
+            save_tracking(tracking)
+            send_alert(f"🔧 Growth {symbol}: trailing stop recovered", level="warning")
+            return {"symbol": symbol, "action": "trailing_recovered"}
+        except Exception as e:
+            send_alert(f"🚨 Growth {symbol}: trailing recovery FAILED", level="error")
+            return {"symbol": symbol, "action": "trailing_recovery_failed",
+                    "error": str(e), "MANUAL_REVIEW": True}
+
+    return None
+
+
+def _cleanup_closed(tracking, positions, actions):
+    """Remove closed positions from tracking."""
     open_symbols = {p["symbol"] for p in positions}
     fresh_orders = get_open_orders_fresh()
     pending_buy_symbols = {o["symbol"] for o in fresh_orders
@@ -660,33 +553,6 @@ def _run_manage_logic(dry_run, lock):
     if closed:
         save_tracking(tracking)
         actions.append({"action": "cleaned", "symbols": closed})
-
-    log = {"bot_name": "growth", "timestamp": now_iso(), "actions": actions}
-    save_json(STATE_DIR / "manage_log_growth.json", log)
-    save_json(state_path("growth", "manage_log.json"), log)
-
-    # Richer heartbeat (item 20)
-    manual_review_count = sum(1 for a in actions if a.get("MANUAL_REVIEW"))
-    recoveries = sum(1 for a in actions if "recover" in a.get("action", ""))
-    write_heartbeat("manage_growth", "ok", {
-        "bot_name": "growth",
-        "positions": len(positions),
-        "actions": len(actions),
-        "recoveries": recoveries,
-        "manual_review_count": manual_review_count,
-    })
-
-    # Job receipt
-    lock.write_receipt(
-        status="completed",
-        orders_submitted=0,
-        errors=[a.get("error", "") for a in actions if "failed" in a.get("action", "")],
-        warnings=[a.get("symbol", "") for a in actions if a.get("MANUAL_REVIEW")],
-    )
-    log_event("growth", "manage", "job_end", reason_code="JOB_END",
-              extra={"actions": len(actions), "positions": len(positions)})
-
-    print(f"Growth Manage: {len(actions)} actions on {len(positions)} positions")
 
 
 if __name__ == "__main__":
