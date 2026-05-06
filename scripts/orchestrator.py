@@ -697,6 +697,18 @@ def run_direct_mode(task, bot="all"):
         print(f"  Journal: {r3.get('output', r3.get('error', ''))[:200]}")
         results["journal"] = r3
 
+        # Daily analytics pipeline + report
+        try:
+            from analytics.pipeline import run_daily_pipeline
+            from analytics.reports import generate_daily_report
+            from analytics.ai_review import generate_recommendations
+            run_daily_pipeline()
+            generate_daily_report()
+            generate_recommendations()
+            print("  Analytics: daily report generated ✅")
+        except Exception as e:
+            print(f"  Analytics: failed ({e})")
+
         send_alert(f"🌆 Afternoon management complete [{bot}]", level="info")
 
         all_results = [v for v in results.values() if isinstance(v, dict)]

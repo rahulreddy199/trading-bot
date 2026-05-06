@@ -59,7 +59,7 @@ def load_jsonl_events(date_str=None):
 
 
 def count_operational_incidents(events):
-    """Count incidents from JSONL events."""
+    """Count incidents from JSONL events. Excludes test-generated events."""
     incidents = {
         "manual_review": 0,
         "stop_recovery": 0,
@@ -68,7 +68,17 @@ def count_operational_incidents(events):
         "stale_lock": 0,
         "errors": 0,
     }
+    # Test stages to exclude
+    TEST_STAGES = {"trade_test", "manage_test", "stale_test", "reconcile", "lock_test",
+                   "circuit_test", "logging_test"}
     for e in events:
+        # Skip test-generated events
+        if e.get("stage", "") in TEST_STAGES:
+            continue
+        # Skip events with fake/test symbols
+        symbol = e.get("symbol", "")
+        if symbol and symbol.endswith("_SYM"):
+            continue
         reason = e.get("reason", "")
         if reason == "MANUAL_REVIEW_REQUIRED":
             incidents["manual_review"] += 1
