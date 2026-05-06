@@ -195,6 +195,20 @@ def get_job_statuses():
     return statuses
 
 
+def get_last_successful_runs():
+    """Get the most recent successful run date for each job (regardless of today)."""
+    runs = {}
+    for receipt_file in STATE_LOCKS.glob("*_receipt.json"):
+        try:
+            receipt = json.loads(receipt_file.read_text())
+            job = receipt.get("job_name", receipt_file.stem)
+            if receipt.get("status") == "completed":
+                runs[job] = receipt.get("date")
+        except Exception:
+            pass
+    return runs
+
+
 def generate_health_summary():
     """Generate complete health summary."""
     summary = {
@@ -226,6 +240,9 @@ def generate_health_summary():
 
     # Stale files
     summary["stale_files"] = check_stale_files()
+
+    # Last successful runs
+    summary["last_successful_runs"] = get_last_successful_runs()
 
     # Account snapshot
     try:

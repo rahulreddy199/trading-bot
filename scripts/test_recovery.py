@@ -342,6 +342,193 @@ def test_jsonl_logging():
     return result
 
 
+def test_multi_day_restart():
+    """After a multi-day restart, yesterday's receipt should NOT block today's run."""
+    result = TestResult("multi_day_restart")
+
+    # Simulate a receipt from yesterday
+    lock = JobLock("growth", "restart_test", timeout_minutes=1)
+    old_receipt = {
+        "job_name": "growth_restart_test",
+        "bot": "growth",
+        "stage": "restart_test",
+        "date": "2026-05-04",  # yesterday
+        "run_at": "2026-05-04T09:35:00-04:00",
+        "input_hash": "abc123",
+        "status": "completed",
+        "orders_submitted": 1,
+        "dedupe_hits": 0,
+        "errors": [],
+        "warnings": [],
+    }
+    save_json(lock.receipt_path, old_receipt)
+
+    # Today's run should NOT be blocked
+    if lock.already_ran_today(input_hash="abc123"):
+        result.fail("Yesterday's receipt incorrectly blocked today's run")
+    else:
+        result.ok("Yesterday's receipt does not block today — day boundary works")
+
+    lock.receipt_path.unlink(missing_ok=True)
+    return result
+
+
+def test_partial_fill_qty_divergence():
+    """Broker has different qty than tracked (partial fill) → reconciliation fixes."""
+    result = TestResult("partial_fill_qty_divergence")
+
+    from reconcile import reconcile
+
+    tracking = {
+        "PARTIAL_SYM": {
+            "planned_entry": 100.0,
+            "phase": "initial",
+            "r_per_share": 5.0,
+            "qty": 50,  # tracked 50 shares
+        }
+    }
+    fake_broker = {
+        "positions": {
+            "PARTIAL_SYM": {
+                "symbol": "PARTIAL_SYM",
+                "qty": "30",  # broker only has 30 (partial fill or partial close)
+                "avg_entry_price": "100.00",
+                "current_price": "105.00",
+            }
+        },
+        "orders": [
+            # Has a protective stop
+            {"symbol": "PARTIAL_SYM", "side": "sell", "type": "stop",
+             "status": "new", "id": "stop123"}
+        ],
+    }
+
+    fixes, updated = reconcile("growth", tracking, broker_state=fake_broker)
+
+    qty_fix = [f for f in fixes if f["type"] == "PARTIAL_FILL_QTY_MISMATCH"]
+    if qty_fix and updated["PARTIAL_SYM"].get("qty") == 30:
+        result.ok("Partial fill qty divergence detected and corrected (50→30)")
+    else:
+        result.fail(f"Qty not corrected. Fixes: {fixes}, qty: {updated.get('PARTIAL_SYM', {}).get('qty')}")
+
+    return result
+
+
+def test_broker_trailing_local_protected():
+    """Broker has trailing stop but local says protected → sync up to trailing."""
+    result = TestResult("broker_trailing_local_protected")
+
+    from reconcile import reconcile
+
+    tracking = {
+        "SYNC_SYM": {
+            "planned_entry": 100.0,
+            "phase": "protected",  # local thinks protected
+            "r_per_share": 5.0,
+        }
+    }
+    fake_broker = {
+        "positions": {
+            "SYNC_SYM": {
+                "symbol": "SYNC_SYM",
+                "qty": "10",
+                "avg_entry_price": "100.00",
+                "current_price": "120.00",
+            }
+        },
+        "orders": [
+            # Broker has trailing stop (more advanced)
+            {"symbol": "SYNC_SYM", "side": "sell", "type": "trailing_stop",
+             "status": "new", "id": "trail999"}
+        ],
+    }
+
+    fixes, updated = reconcile("growth", tracking, broker_state=fake_broker)
+
+    phase_fix = [f for f in fixes if f["type"] == "PHASE_MISMATCH"]
+    if phase_fix and updated["SYNC_SYM"].get("phase") == "trailing":
+        result.ok("Phase synced up: protected → trailing")
+    else:
+        result.fail(f"Phase not synced. Phase: {updated.get('SYNC_SYM', {}).get('phase')}")
+
+    return result
+
+
+def test_no_protective_order_detected():
+    """Position exists but no stop/trail at broker → flags for recovery."""
+    result = TestResult("no_protective_order_detected")
+
+    from reconcile import reconcile
+
+    tracking = {
+        "NAKED_SYM": {
+            "planned_entry": 50.0,
+            "phase": "initial",
+            "r_per_share": 2.0,
+        }
+    }
+    fake_broker = {
+        "positions": {
+            "NAKED_SYM": {
+                "symbol": "NAKED_SYM",
+                "qty": "20",
+                "avg_entry_price": "50.00",
+                "current_price": "52.00",
+            }
+        },
+        "orders": [],  # NO protective orders
+    }
+
+    fixes, updated = reconcile("growth", tracking, broker_state=fake_broker)
+
+    no_stop = [f for f in fixes if f["type"] == "NO_PROTECTIVE_ORDER"]
+    if no_stop and updated["NAKED_SYM"].get("needs_stop_recovery"):
+        result.ok("Naked position detected and flagged for stop recovery")
+    else:
+        result.fail(f"Not flagged. Fixes: {fixes}")
+
+    return result
+
+
+def test_pending_cancel_limbo():
+    """Order stuck in pending_cancel → flags MANUAL_REVIEW."""
+    result = TestResult("pending_cancel_limbo")
+
+    from reconcile import reconcile
+
+    tracking = {
+        "LIMBO_SYM": {
+            "planned_entry": 75.0,
+            "phase": "trailing",
+            "r_per_share": 3.0,
+        }
+    }
+    fake_broker = {
+        "positions": {
+            "LIMBO_SYM": {
+                "symbol": "LIMBO_SYM",
+                "qty": "15",
+                "avg_entry_price": "75.00",
+                "current_price": "85.00",
+            }
+        },
+        "orders": [
+            {"symbol": "LIMBO_SYM", "side": "sell", "type": "trailing_stop",
+             "status": "pending_cancel", "id": "limbo123"}
+        ],
+    }
+
+    fixes, updated = reconcile("growth", tracking, broker_state=fake_broker)
+
+    limbo = [f for f in fixes if f["type"] == "ORDER_LIMBO"]
+    if limbo and updated["LIMBO_SYM"].get("MANUAL_REVIEW"):
+        result.ok("Pending_cancel limbo detected and flagged for manual review")
+    else:
+        result.fail(f"Not flagged. Fixes: {fixes}")
+
+    return result
+
+
 ALL_TESTS = [
     test_double_run_trade,
     test_double_run_manage,
@@ -355,6 +542,11 @@ ALL_TESTS = [
     test_correlation_cap_rejection,
     test_daily_circuit_breaker,
     test_jsonl_logging,
+    test_multi_day_restart,
+    test_partial_fill_qty_divergence,
+    test_broker_trailing_local_protected,
+    test_no_protective_order_detected,
+    test_pending_cancel_limbo,
 ]
 
 

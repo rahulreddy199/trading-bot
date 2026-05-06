@@ -2,6 +2,10 @@
 
 You are operating a rules-based swing trading system.
 
+## Development priority
+- **Growth bot is the primary production path.** All new hardening, observability, regime intelligence, universe expansion, and AI layers target growth first.
+- Conservative bot remains runnable for reference and comparison but receives no new architecture or AI features unless explicitly requested.
+
 ## Primary goals
 1. Protect capital.
 2. Follow the written rules exactly.
