@@ -1,19 +1,9 @@
 """
-common.py — Backward-compatible facade.
+infra — Infrastructure modules for the trading bot.
 
-All functionality now lives in scripts/infra/*. This file re-exports
-every public symbol so existing `from common import X` statements
-continue to work without changes.
+Split from common.py for maintainability. common.py re-exports everything
+for backward compatibility.
 """
-import sys
-from pathlib import Path
-
-# Ensure infra package is importable
-SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-# Re-export everything from infra submodules
 from infra.paths import (
     ROOT, CONFIG_DIR, STATE_DIR, JOURNAL_DIR, MARKET_TZ,
     STATE_CONSERVATIVE, STATE_GROWTH, STATE_SHARED, STATE_LOCKS, STATE_LOGS,
@@ -34,7 +24,5 @@ from infra.broker import (
 )
 from infra.alerts import send_alert
 from infra.sizing import risk_position_size
-from infra.config import (
-    load_strategy, load_strategy_for,
-    load_watchlist, load_watchlist_for, load_watchlist_with_sectors,
-)
+from infra.config import load_strategy, load_strategy_for, load_watchlist, load_watchlist_for, load_watchlist_with_sectors
+
