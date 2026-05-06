@@ -7,7 +7,15 @@ __pycache__/
 # State files (generated at runtime)
 state/*.json
 state/*.csv
+state/conservative/*.json
+state/conservative/*.csv
+state/growth/*.json
+state/growth/*.csv
+state/shared/*.json
+state/locks/
+state/logs/
 !state/.gitkeep
+!state/**/.gitkeep
 
 # Journal entries (generated at runtime)
 journal/*.md

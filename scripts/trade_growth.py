@@ -24,14 +24,19 @@ from common import (
     alpaca_get,
     alpaca_post,
     cancel_order_and_verify,
+    compute_input_hash,
     enforce_live_guardrails,
     get_account,
     get_clock,
     get_positions,
+    JobLock,
+    log_event,
     now_iso,
+    resolve_state,
     risk_position_size,
     save_json,
     send_alert,
+    state_path,
     today_str,
     write_heartbeat,
     ACTIVE_ORDER_STATUSES,
@@ -43,13 +48,15 @@ def load_growth_strategy():
 
 
 def load_tracking():
-    path = STATE_DIR / "position_tracking_growth.json"
+    path = resolve_state("growth", "position_tracking.json")
     if path.exists():
         return json.loads(path.read_text())
     return {}
 
 
 def save_tracking(tracking):
+    save_json(state_path("growth", "position_tracking.json"), tracking)
+    # Legacy compat
     save_json(STATE_DIR / "position_tracking_growth.json", tracking)
 
 
@@ -135,7 +142,19 @@ def main(dry_run=False):
         kill_switch_path = STATE_DIR / "KILL_SWITCH"
         if kill_switch_path.exists():
             print("🛑 KILL SWITCH ACTIVE — no new orders.")
+            log_event("growth", "trade", "kill_switch_active", reason_code="CIRCUIT_BREAKER")
             return
+
+    # Job lock + idempotency
+    with JobLock("growth", "trade", timeout_minutes=30) as lock:
+        if not lock.acquired:
+            print("Trade skipped: another instance running or lock active")
+            return
+        _run_trade_logic(lock, dry_run)
+
+
+def _run_trade_logic(lock, dry_run):
+    log_event("growth", "trade", "job_start", reason_code="JOB_START")
 
     # Daily drawdown circuit breaker
     try:
@@ -153,7 +172,10 @@ def main(dry_run=False):
         pass  # Don't block trading on account-fetch failure
 
     strategy = load_growth_strategy()
-    candidates_path = STATE_DIR / "candidates_growth.json"
+    candidates_path = resolve_state("growth", "candidates.json")
+    if not candidates_path.exists():
+        # Also check legacy path
+        candidates_path = STATE_DIR / "candidates_growth.json"
     if not candidates_path.exists():
         raise RuntimeError("Missing candidates_growth.json. Run research_growth.py first.")
 
@@ -163,14 +185,31 @@ def main(dry_run=False):
     research_date = payload.get("date", "")
     if research_date != datetime.now(MARKET_TZ).strftime("%Y-%m-%d"):
         print(f"Trade skipped: candidates stale ({research_date})")
+        log_event("growth", "trade", "stale_candidates", reason_code="JOB_END",
+                  extra={"research_date": research_date})
+        lock.write_receipt(status="skipped_stale")
         return
 
-    # Idempotency
-    order_plan_path = STATE_DIR / "order_plan_growth.json"
+    # Idempotency: check receipt
+    input_hash = compute_input_hash(payload.get("candidates", []))
+    if lock.already_ran_today(input_hash=input_hash):
+        print("Trade skipped: already ran today with same inputs")
+        return
+
+    # Legacy idempotency check
+    order_plan_path = state_path("growth", "order_plan.json")
+    legacy_plan_path = STATE_DIR / "order_plan_growth.json"
     if order_plan_path.exists():
         prior = json.loads(order_plan_path.read_text())
         if prior.get("timestamp", "").startswith(datetime.now(MARKET_TZ).strftime("%Y-%m-%d")) and prior.get("orders"):
             print(f"Trade skipped: already ran today")
+            lock.write_receipt(status="skipped_already_ran", input_hash=input_hash)
+            return
+    if legacy_plan_path.exists() and not order_plan_path.exists():
+        prior = json.loads(legacy_plan_path.read_text())
+        if prior.get("timestamp", "").startswith(datetime.now(MARKET_TZ).strftime("%Y-%m-%d")) and prior.get("orders"):
+            print(f"Trade skipped: already ran today")
+            lock.write_receipt(status="skipped_already_ran", input_hash=input_hash)
             return
 
     clock = get_clock()
@@ -462,6 +501,12 @@ def main(dry_run=False):
                 break
         save_tracking(tracking)
 
+        # Log the entry
+        log_event("growth", "trade", "order_submitted", symbol=symbol,
+                  reason_code="ENTRY_ACCEPTED", order_id=response.get("id"),
+                  extra={"qty": qty, "trigger": round(trigger_price, 2),
+                         "stop": round(stop_price, 2), "setup": candidate["setup_type"]})
+
         send_alert(
             f"📈 GROWTH ORDER: {symbol} x{qty} | {candidate['setup_type']} | "
             f"trigger ${trigger_price:.2f} stop ${stop_price:.2f} | score={candidate['score']}",
@@ -475,12 +520,26 @@ def main(dry_run=False):
 
     save_json(order_plan_path, plan)
     save_json(STATE_DIR / "last_orders_growth.json", plan["orders"])
+    # Also save to namespaced path
+    save_json(state_path("growth", "order_plan.json"), plan)
+    save_json(state_path("growth", "last_orders.json"), plan["orders"])
+
     write_heartbeat("trade_growth", "ok", {
         "bot_name": "growth",
         "orders": len(plan["orders"]),
         "skipped": len(plan["skips"]),
         "cancelled_stale": len(cancelled_stale),
     })
+
+    # Write job receipt
+    dedupe_hits = len([s for s in plan["skips"] if s.get("reason") == "duplicate_order"])
+    lock.write_receipt(
+        status="completed",
+        orders_submitted=len(plan["orders"]),
+        dedupe_hits=dedupe_hits,
+        input_hash=input_hash,
+    )
+
     print(f"Growth Trade: {len(plan['orders'])} orders, {len(plan['skips'])} skipped")
 
 

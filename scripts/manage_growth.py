@@ -28,9 +28,13 @@ from common import (
     cancel_order_and_verify,
     enforce_live_guardrails,
     get_positions,
+    JobLock,
+    log_event,
     now_iso,
+    resolve_state,
     save_json,
     send_alert,
+    state_path,
     today_str,
     write_heartbeat,
 )
@@ -110,13 +114,15 @@ def submit_market_sell(symbol, qty, dry_run=False):
 
 
 def load_tracking():
-    path = STATE_DIR / "position_tracking_growth.json"
+    path = resolve_state("growth", "position_tracking.json")
     if path.exists():
         return json.loads(path.read_text())
     return {}
 
 
 def save_tracking(tracking):
+    save_json(state_path("growth", "position_tracking.json"), tracking)
+    # Legacy compat
     save_json(STATE_DIR / "position_tracking_growth.json", tracking)
 
 
@@ -220,6 +226,16 @@ def try_reconstruct_metadata(symbol, track):
 
 def main(dry_run=False):
     enforce_live_guardrails()
+
+    with JobLock("growth", "manage", timeout_minutes=15) as lock:
+        if not lock.acquired:
+            print("Manage skipped: another instance running")
+            return
+        log_event("growth", "manage", "job_start", reason_code="JOB_START")
+        _run_manage_logic(dry_run, lock)
+
+
+def _run_manage_logic(dry_run, lock):
     strategy = load_growth_strategy()
     positions = get_positions()
     exit_cfg = strategy["exit"]
@@ -647,6 +663,7 @@ def main(dry_run=False):
 
     log = {"bot_name": "growth", "timestamp": now_iso(), "actions": actions}
     save_json(STATE_DIR / "manage_log_growth.json", log)
+    save_json(state_path("growth", "manage_log.json"), log)
 
     # Richer heartbeat (item 20)
     manual_review_count = sum(1 for a in actions if a.get("MANUAL_REVIEW"))
@@ -658,6 +675,17 @@ def main(dry_run=False):
         "recoveries": recoveries,
         "manual_review_count": manual_review_count,
     })
+
+    # Job receipt
+    lock.write_receipt(
+        status="completed",
+        orders_submitted=0,
+        errors=[a.get("error", "") for a in actions if "failed" in a.get("action", "")],
+        warnings=[a.get("symbol", "") for a in actions if a.get("MANUAL_REVIEW")],
+    )
+    log_event("growth", "manage", "job_end", reason_code="JOB_END",
+              extra={"actions": len(actions), "positions": len(positions)})
+
     print(f"Growth Manage: {len(actions)} actions on {len(positions)} positions")
 
 
