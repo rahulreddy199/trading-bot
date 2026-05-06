@@ -26,6 +26,7 @@ from common import (
     CONFIG_DIR,
     save_json,
     send_alert,
+    state_path,
     write_heartbeat,
     now_iso,
     today_str,
@@ -513,6 +514,7 @@ def main():
     }
 
     save_json(STATE_DIR / "candidates_growth.json", output)
+    save_json(state_path("growth", "candidates.json"), output)
 
     # CSV for quick review — always rewrite (header-only if no candidates)
     csv_lines = ["symbol,score,setup_type,trigger,stop,r_per_share,rs_3m"]

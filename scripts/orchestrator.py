@@ -33,6 +33,8 @@ from common import (
 
 # --- Configuration ---
 ANTHROPIC_API_KEY = get_env("ANTHROPIC_API_KEY", "")
+if ANTHROPIC_API_KEY in ("", "your_anthropic_key_here", "your_key_here", "sk-placeholder"):
+    ANTHROPIC_API_KEY = ""
 VENV_PYTHON = str(ROOT / "venv" / "bin" / "python")
 API_USAGE_PATH = STATE_DIR / "api_usage.json"
 BOT_LOG_PATH = STATE_DIR / "bot_log.json"
@@ -43,7 +45,7 @@ MAX_TURNS_PER_RUN = 8
 MAX_WEEKLY_PARAM_CHANGES = 2
 
 # Valid time windows for order placement (hour, minute) in local time
-MORNING_TRADE_WINDOW = (9, 30, 11, 0)   # 9:30 AM - 11:00 AM
+MORNING_TRADE_WINDOW = (9, 30, 15, 30)   # 9:30 AM - 3:30 PM
 # No afternoon trades — afternoon is manage-only
 
 
