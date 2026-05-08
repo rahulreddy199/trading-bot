@@ -157,6 +157,23 @@ def generate_recommendations(analytics=None, attribution=None, experiments=None)
         "recommendations": recommendations,
     }
     save_json(STATE_SHARED / "ai_review.json", output)
+
+    # --- Append to cumulative history so AI can learn from trends ---
+    history_path = STATE_SHARED / "ai_review_history.json"
+    try:
+        if history_path.exists():
+            history = json.loads(history_path.read_text())
+        else:
+            history = []
+        # Avoid duplicate entries for the same date
+        history = [h for h in history if h.get("date") != today_str()]
+        history.append(output)
+        # Keep last 365 days max
+        history = history[-365:]
+        save_json(history_path, history)
+    except Exception as e:
+        print(f"⚠️ Failed to update ai_review_history.json: {e}")
+
     print(f"AI Review: {len(recommendations)} recommendations generated")
     return output
 
