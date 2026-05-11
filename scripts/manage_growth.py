@@ -281,6 +281,20 @@ def _reconcile_broker_state(symbol, track, qty, tracking, dry_run):
     has_trail, trail_id = has_trailing_stop(symbol, fresh_orders)
     has_stop = bool(get_stop_orders_for_symbol(symbol, fresh_orders))
 
+    # ── SYNC: update local stop price from broker's actual trailing/stop order ──
+    for order in fresh_orders:
+        if order.get("symbol") != symbol or order.get("side") != "sell":
+            continue
+        broker_stop = order.get("stop_price")
+        broker_hwm = order.get("hwm")
+        if broker_stop:
+            track["current_stop"] = round(float(broker_stop), 2)
+        if broker_hwm:
+            track["highest_close"] = max(
+                track.get("highest_close", 0), round(float(broker_hwm), 2)
+            )
+        break  # use the first matching sell order
+
     if track["phase"] == "protected" and has_trail:
         track["phase"] = "trailing"
         track["exit_order_id"] = trail_id
