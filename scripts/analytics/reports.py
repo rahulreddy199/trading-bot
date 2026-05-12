@@ -471,26 +471,14 @@ def generate_daily_report(analytics=None, attribution=None):
 
 
 def generate_weekly_report(analytics=None, attribution=None, experiments=None):
-    """Generate weekly markdown review."""
+    """Generate weekly markdown review from analytics + all available state."""
     if analytics is None:
-        path = STATE_SHARED / "analytics_rolling.json"
-        if path.exists():
-            analytics = json.loads(path.read_text())
-        else:
-            analytics = {}
-
+        analytics = _load_json(STATE_SHARED / "analytics_rolling.json")
     if attribution is None:
-        path = STATE_SHARED / "attribution_daily.json"
-        if path.exists():
-            attribution = json.loads(path.read_text())
-        else:
-            attribution = {}
-
+        attribution = _load_json(STATE_SHARED / "attribution_daily.json")
     if experiments is None:
-        path = STATE_SHARED / "experiments.json"
-        if path.exists():
-            experiments = json.loads(path.read_text())
-        else:
+        experiments = _load_json(STATE_SHARED / "experiments.json")
+        if not experiments:
             experiments = {"experiments": []}
 
     date = today_str()
@@ -502,26 +490,247 @@ def generate_weekly_report(analytics=None, attribution=None, experiments=None):
     lines.append(f"# Weekly Review — {date}")
     lines.append("")
 
+    # ── PERFORMANCE SUMMARY ──
     lines.append("## Performance Summary")
-    lines.append(f"| Window | Trades | Win Rate | PF | Avg R | Net PnL |")
-    lines.append(f"|--------|--------|----------|-----|-------|---------|")
+    lines.append("| Window | Trades | Win Rate | PF | Avg R | Net PnL |")
+    lines.append("|--------|--------|----------|-----|-------|---------|")
     for label, m in [("7d", m7d), ("30d", m30d), ("All", all_time)]:
-        lines.append(f"| {label} | {m.get('total_trades',0)} | {m.get('win_rate',0)*100:.0f}% | {m.get('profit_factor',0)} | {m.get('avg_r',0)} | ${m.get('net_pnl',0):,.0f} |")
+        pf = m.get('profit_factor', 0)
+        pf_str = f"{pf:.2f}" if isinstance(pf, (int, float)) and pf != float('inf') else str(pf)
+        lines.append(f"| {label} | {m.get('total_trades',0)} | {m.get('win_rate',0)*100:.0f}% | {pf_str} | {m.get('avg_r',0)} | ${m.get('net_pnl',0):,.0f} |")
     lines.append("")
 
-    # Attribution highlights
+    # ── EQUITY CURVE ──
+    lines.append("## Equity Curve")
+    equity_curve = _load_json(STATE_SHARED / "equity_curve.json")
+    if isinstance(equity_curve, list) and len(equity_curve) >= 2:
+        latest = equity_curve[-1]
+        first = equity_curve[0]
+        eq_now = latest.get("equity", 0)
+        eq_start = first.get("equity", 20000)
+        total_return = eq_now - 20000
+        total_pct = (total_return / 20000 * 100)
+        # Week-over-week
+        week_ago_eq = eq_start
+        for e in equity_curve:
+            week_ago_eq = e.get("equity", week_ago_eq)  # will end up being the last entry before 7d ago
+        if len(equity_curve) >= 5:
+            week_ago_eq = equity_curve[-min(5, len(equity_curve))].get("equity", eq_start)
+        week_change = eq_now - week_ago_eq
+        week_pct = (week_change / week_ago_eq * 100) if week_ago_eq else 0
+
+        lines.append(f"- Current equity: **${eq_now:,.2f}**")
+        lines.append(f"- Total return: **${total_return:+,.2f} ({total_pct:+.2f}%)**")
+        lines.append(f"- Week change: ${week_change:+,.2f} ({week_pct:+.2f}%)")
+        lines.append(f"- Data points: {len(equity_curve)} days")
+        lines.append("")
+        # Mini equity table
+        lines.append("| Date | Equity | Change |")
+        lines.append("|------|--------|--------|")
+        for i, e in enumerate(equity_curve[-7:]):  # last 7 data points
+            eq = e.get("equity", 0)
+            d = e.get("date", "?")
+            if i == 0:
+                lines.append(f"| {d} | ${eq:,.2f} | — |")
+            else:
+                prev_eq = equity_curve[-7:][i-1].get("equity", eq)
+                chg = eq - prev_eq
+                lines.append(f"| {d} | ${eq:,.2f} | {chg:+,.2f} |")
+    else:
+        lines.append("- Not enough data for equity curve yet")
+    lines.append("")
+
+    # ── ALL CLOSED TRADES ──
+    lines.append("## Trade History")
+    trade_history_raw = None
+    for th_path in [
+        STATE_SHARED / "trade_history.json",
+        resolve_state("growth", "trade_history.json"),
+        STATE_DIR / "trade_history.json",
+    ]:
+        if th_path.exists():
+            trade_history_raw = _load_json(th_path)
+            break
+    trade_list = []
+    if isinstance(trade_history_raw, list):
+        trade_list = trade_history_raw
+    elif isinstance(trade_history_raw, dict):
+        trade_list = trade_history_raw.get("trades", [])
+
+    if trade_list:
+        lines.append("| # | Symbol | Entry | Exit | P&L | R | Exit Type | Setup | Bars |")
+        lines.append("|---|--------|-------|------|-----|---|-----------|-------|------|")
+        for i, t in enumerate(trade_list, 1):
+            sym = t.get("symbol", "?")
+            entry = t.get("entry_price", 0)
+            exit_p = t.get("exit_price", 0)
+            pnl = t.get("pnl")
+            r_mult = t.get("r_multiple")
+            exit_type = t.get("exit_type") or t.get("exit_reason", "?")
+            setup = t.get("setup_type") or t.get("source", "?")
+            bars = t.get("bars_held", "?")
+            pnl_str = f"${pnl:+,.2f}" if pnl is not None else "?"
+            r_str = f"{r_mult:.2f}R" if r_mult is not None else "?"
+            lines.append(f"| {i} | {sym} | ${entry:,.2f} | ${exit_p:,.2f} | {pnl_str} | {r_str} | {exit_type} | {setup} | {bars} |")
+        lines.append("")
+
+        # Win/loss summary
+        total = len(trade_list)
+        wins = sum(1 for t in trade_list if (t.get("pnl") or 0) > 0)
+        losses = sum(1 for t in trade_list if (t.get("pnl") or 0) < 0)
+        total_pnl = sum(t.get("pnl", 0) or 0 for t in trade_list)
+        avg_win = 0
+        avg_loss = 0
+        win_pnls = [t.get("pnl", 0) for t in trade_list if (t.get("pnl") or 0) > 0]
+        loss_pnls = [t.get("pnl", 0) for t in trade_list if (t.get("pnl") or 0) < 0]
+        if win_pnls:
+            avg_win = sum(win_pnls) / len(win_pnls)
+        if loss_pnls:
+            avg_loss = sum(loss_pnls) / len(loss_pnls)
+        lines.append(f"**Summary**: {total} trades | {wins}W / {losses}L | "
+                     f"Net: ${total_pnl:+,.2f} | Avg win: ${avg_win:,.2f} | Avg loss: ${avg_loss:,.2f}")
+    else:
+        lines.append("- No closed trades yet")
+    lines.append("")
+
+    # ── OPEN POSITIONS ──
+    lines.append("## Open Positions")
+    growth_tracking = _load_json(resolve_state("growth", "position_tracking.json"))
+    try:
+        positions = get_positions()
+    except Exception:
+        positions = []
+
+    if positions:
+        lines.append("| Symbol | Setup | Phase | Entry | Current | P&L | R | Best R | Bars | Stop |")
+        lines.append("|--------|-------|-------|-------|---------|-----|---|--------|------|------|")
+        for pos in positions:
+            sym = pos.get("symbol", "?")
+            entry = float(pos.get("avg_entry_price", 0))
+            current = float(pos.get("current_price", 0))
+            upl = float(pos.get("unrealized_pl", 0))
+            track = growth_tracking.get(sym, {})
+            setup = track.get("setup_type", "?")
+            phase = track.get("phase", "?")
+            r_per = track.get("r_per_share", 0)
+            current_r = round((current - entry) / r_per, 2) if r_per and r_per > 0 else 0
+            best_r = track.get("best_gain_r", 0)
+            bars = track.get("bars_held", 0)
+            stop = track.get("current_stop") or track.get("initial_stop") or "?"
+            stop_str = f"${stop:,.2f}" if isinstance(stop, (int, float)) else str(stop)
+            lines.append(f"| {sym} | {setup} | {phase} | ${entry:,.2f} | ${current:,.2f} | ${upl:+,.2f} | {current_r}R | {best_r}R | {bars} | {stop_str} |")
+    else:
+        lines.append("- No open positions")
+    lines.append("")
+
+    # ── ATTRIBUTION HIGHLIGHTS ──
     lines.append("## Attribution Highlights")
     for dim in ["setup_type", "regime", "sector"]:
         dim_data = attribution.get(dim, {})
         if dim_data:
             lines.append(f"\n### By {dim}")
-            lines.append(f"| {dim} | Trades | Win Rate | Avg R |")
-            lines.append(f"|------|--------|----------|-------|")
+            lines.append(f"| {dim} | Trades | Win Rate | Avg R | Net PnL |")
+            lines.append(f"|------|--------|----------|-------|---------|")
             for k, v in sorted(dim_data.items(), key=lambda x: x[1].get("net_pnl", 0), reverse=True):
-                lines.append(f"| {k} | {v.get('total_trades',0)} | {v.get('win_rate',0)*100:.0f}% | {v.get('avg_r',0)} |")
+                net = v.get("net_pnl", 0)
+                lines.append(f"| {k} | {v.get('total_trades',0)} | {v.get('win_rate',0)*100:.0f}% | {v.get('avg_r',0)} | ${net:+,.2f} |")
     lines.append("")
 
-    # Experiments
+    # ── DAILY REPORT SUMMARIES ──
+    lines.append("## This Week's Daily Summaries")
+    import glob
+    report_files = sorted(glob.glob(str(STATE_SHARED / "report_daily_*.md")))
+    # Get last 7 reports
+    for rf_path in report_files[-7:]:
+        rf = Path(rf_path)
+        try:
+            content = rf.read_text()
+            # Extract key lines
+            report_date = rf.stem.replace("report_daily_", "")
+            # Find equity, positions, orders, closed trades
+            equity_line = ""
+            positions_line = ""
+            orders_line = ""
+            closed_line = ""
+            regime_line = ""
+            for line in content.split("\n"):
+                if line.startswith("- Equity:"):
+                    equity_line = line.replace("- Equity: ", "")
+                if line.startswith("- Open positions:") and "slots" not in line:
+                    positions_line = line.replace("- Open positions: ", "")
+                if "orders placed" in line.lower() or line.startswith("- ✅"):
+                    orders_line = line.strip("- ")
+                if line.startswith("- Growth regime mode:"):
+                    regime_line = line.replace("- Growth regime mode: ", "").strip("*")
+            lines.append(f"- **{report_date}**: {equity_line} | regime={regime_line} | {positions_line}")
+        except Exception:
+            pass
+    if not report_files:
+        lines.append("- No daily reports found")
+    lines.append("")
+
+    # ── AI REVIEW TRENDS ──
+    lines.append("## AI Review Trends")
+    ai_history = _load_json(STATE_SHARED / "ai_review_history.json")
+    if isinstance(ai_history, list) and ai_history:
+        # Count recommendation types across history
+        rec_counts = {}
+        for day_review in ai_history:
+            for rec in day_review.get("recommendations", []):
+                key = rec.get("recommendation", "?")
+                rec_counts[key] = rec_counts.get(key, 0) + 1
+        lines.append(f"- Reviews tracked: {len(ai_history)} days")
+        lines.append("- **Recurring recommendations:**")
+        for rec, count in sorted(rec_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"  - {rec}: {count}× in {len(ai_history)} days")
+    else:
+        lines.append("- No AI review history yet")
+    lines.append("")
+
+    # ── STRATEGY OBSERVATIONS (for AI to reason about) ──
+    lines.append("## Strategy Observations")
+    candidates = _load_json(resolve_state("growth", "candidates.json"))
+    if candidates:
+        n_rejected = len(candidates.get("rejected", []))
+        n_candidates = len(candidates.get("candidates", []))
+        total_scanned = n_rejected + n_candidates
+        if total_scanned > 0:
+            pass_rate = (n_candidates / total_scanned * 100)
+            lines.append(f"- Latest scan: {n_candidates}/{total_scanned} passed ({pass_rate:.0f}% pass rate)")
+        # Rejection pattern
+        rejection_reasons = {}
+        for r in candidates.get("rejected", []):
+            for reason in r.get("reasons", []):
+                rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+        if rejection_reasons:
+            lines.append("- **Top rejection reasons (latest scan):**")
+            for reason, count in sorted(rejection_reasons.items(), key=lambda x: -x[1])[:5]:
+                lines.append(f"  - {reason}: {count}/{total_scanned}")
+    # Slot utilization
+    open_count = len([t for t in growth_tracking.values()
+                      if t.get("phase") not in ("pending", "exit_pending", None)])
+    lines.append(f"- Slot utilization: {open_count}/5 ({open_count/5*100:.0f}%)")
+    if open_count <= 2:
+        lines.append("- ⚠️ Low utilization — filters may be too strict or market not offering setups")
+    # Sector concentration
+    watchlist = _load_json(Path(SCRIPTS_DIR).parent / "config" / "watchlist_growth.json")
+    sector_map = {}
+    if watchlist:
+        for s in watchlist.get("symbols", []):
+            sector_map[s["ticker"]] = s.get("sector", "?")
+    open_sectors = {}
+    for sym, track in growth_tracking.items():
+        if track.get("phase") not in ("pending", "exit_pending", None):
+            sector = sector_map.get(sym, "?")
+            open_sectors[sector] = open_sectors.get(sector, 0) + 1
+    if open_sectors:
+        sectors_str = ", ".join([f"{s}: {c}" for s, c in sorted(open_sectors.items())])
+        lines.append(f"- Open by sector: {sectors_str}")
+        if len(open_sectors) == 1 and open_count >= 2:
+            lines.append("- ⚠️ All positions in one sector — concentration risk")
+    lines.append("")
+
+    # ── EXPERIMENTS ──
     lines.append("## Active Experiments")
     active = [e for e in experiments.get("experiments", []) if e.get("status") == "active"]
     if active:
@@ -531,11 +740,31 @@ def generate_weekly_report(analytics=None, attribution=None, experiments=None):
         lines.append("- No active experiments")
     lines.append("")
 
-    # Recommendations placeholder
-    lines.append("## Recommended Next Experiments")
-    lines.append("- *(See ai_review output for structured recommendations)*")
+    # ── WHAT TO WATCH NEXT WEEK ──
+    lines.append("## What to Watch Next Week")
+    if open_count == 0:
+        lines.append("- No open positions — watch for new setups if regime stays full_risk")
+    for sym, track in growth_tracking.items():
+        phase = track.get("phase")
+        best_r = track.get("best_gain_r", 0)
+        bars = track.get("bars_held", 0)
+        if phase == "initial" and bars >= 7:
+            lines.append(f"- **{sym}**: {bars} bars in initial, approaching time stop (10 bars)")
+        if phase == "trailing" and best_r >= 3:
+            lines.append(f"- **{sym}**: strong runner at {best_r}R — watch for trail upgrades")
+        if phase == "initial" and best_r < 0.5 and bars >= 3:
+            lines.append(f"- **{sym}**: slow starter ({best_r}R after {bars} bars) — monitor closely")
     lines.append("")
 
+    # ── INSUFFICIENT DATA ──
+    total_trades = all_time.get("total_trades", 0) if all_time else 0
+    if total_trades < 20:
+        lines.append("## Insufficient Evidence")
+        lines.append(f"- Only {total_trades} closed trades. Need 20+ for reliable weekly analysis.")
+        lines.append("- Strategy tuning should remain **OFF** until sample size is sufficient.")
+        lines.append("")
+
+    # Save
     report_path = STATE_SHARED / f"report_weekly_{date}.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"Weekly report written: {report_path}")
