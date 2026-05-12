@@ -9,24 +9,30 @@ import sys
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from common import STATE_SHARED, JOURNAL_DIR, save_json, today_str, now_iso
+from common import (
+    STATE_DIR, STATE_SHARED, JOURNAL_DIR,
+    save_json, today_str, now_iso, resolve_state,
+    get_positions, get_account,
+)
+
+
+def _load_json(path):
+    """Safely load JSON file, return {} or [] on failure."""
+    try:
+        if path.exists():
+            data = json.loads(path.read_text())
+            return data
+    except Exception:
+        pass
+    return {}
 
 
 def generate_daily_report(analytics=None, attribution=None):
     """Generate daily markdown review from analytics outputs."""
     if analytics is None:
-        path = STATE_SHARED / "analytics_daily.json"
-        if path.exists():
-            analytics = json.loads(path.read_text())
-        else:
-            analytics = {}
-
+        analytics = _load_json(STATE_SHARED / "analytics_daily.json")
     if attribution is None:
-        path = STATE_SHARED / "attribution_daily.json"
-        if path.exists():
-            attribution = json.loads(path.read_text())
-        else:
-            attribution = {}
+        attribution = _load_json(STATE_SHARED / "attribution_daily.json")
 
     date = analytics.get("date", today_str())
     regime = analytics.get("regime", {})
@@ -38,50 +44,221 @@ def generate_daily_report(analytics=None, attribution=None):
     lines.append(f"# Daily Review — {date}")
     lines.append("")
 
-    # Headline
+    # ── HEADLINE METRICS ──
     lines.append("## Headline Metrics")
-    lines.append(f"| Metric | All-Time | 7-Day |")
-    lines.append(f"|--------|----------|-------|")
+    lines.append("| Metric | All-Time | 7-Day |")
+    lines.append("|--------|----------|-------|")
     lines.append(f"| Trades | {metrics.get('total_trades', 0)} | {m7d.get('total_trades', 0)} |")
     lines.append(f"| Net PnL | ${metrics.get('net_pnl', 0):,.2f} | ${m7d.get('net_pnl', 0):,.2f} |")
     lines.append(f"| Win Rate | {metrics.get('win_rate', 0)*100:.1f}% | {m7d.get('win_rate', 0)*100:.1f}% |")
-    lines.append(f"| Profit Factor | {metrics.get('profit_factor', 0)} | {m7d.get('profit_factor', 0)} |")
+    pf_all = metrics.get('profit_factor', 0)
+    pf_7d = m7d.get('profit_factor', 0)
+    pf_all_str = f"{pf_all:.2f}" if isinstance(pf_all, (int, float)) and pf_all != float('inf') else str(pf_all)
+    pf_7d_str = f"{pf_7d:.2f}" if isinstance(pf_7d, (int, float)) and pf_7d != float('inf') else str(pf_7d)
+    lines.append(f"| Profit Factor | {pf_all_str} | {pf_7d_str} |")
     lines.append(f"| Avg R | {metrics.get('avg_r', 0)} | {m7d.get('avg_r', 0)} |")
     lines.append(f"| Avg Hold | {metrics.get('avg_hold_time', 0)} bars | {m7d.get('avg_hold_time', 0)} bars |")
     lines.append(f"| Slippage | {metrics.get('avg_slippage_bps', 0)} bps | {m7d.get('avg_slippage_bps', 0)} bps |")
     lines.append("")
 
-    # Account
+    # ── ACCOUNT ──
     lines.append("## Account")
     lines.append(f"- Equity: ${analytics.get('equity', 0):,.2f}")
     lines.append(f"- Open positions: {analytics.get('open_positions', 0)}")
     lines.append(f"- Unrealized P&L: ${analytics.get('unrealized_pnl', 0):,.2f}")
     lines.append("")
 
-    # Regime
+    # ── MARKET REGIME ──
     lines.append("## Market Regime")
     lines.append(f"- Label: **{regime.get('regime_label', 'unknown')}**")
     lines.append(f"- SPY > 50 SMA: {regime.get('spy_above_50sma', '?')}")
     lines.append(f"- SPY > 200 SMA: {regime.get('spy_above_200sma', '?')}")
     lines.append(f"- VIX: {regime.get('vix_value', '?')} ({regime.get('vix_level', '?')})")
+    # Add research regime if available
+    candidates = _load_json(resolve_state("growth", "candidates.json"))
+    if candidates:
+        lines.append(f"- Growth regime mode: **{candidates.get('regime_mode', '?')}**")
+        breadth = candidates.get('breadth_proxy_score')
+        if breadth is not None:
+            lines.append(f"- Breadth proxy: {breadth}%")
     lines.append("")
 
-    # Contributors
+    # ── OPEN POSITIONS (detailed) ──
+    lines.append("## Open Positions")
+    growth_tracking = _load_json(resolve_state("growth", "position_tracking.json"))
+    conservative_tracking = _load_json(resolve_state("conservative", "position_tracking.json"))
+
+    try:
+        positions = get_positions()
+    except Exception:
+        positions = []
+
+    if positions:
+        lines.append("| Symbol | Bot | Setup | Phase | Entry | Current | P&L | R | Best R | Bars | Stop |")
+        lines.append("|--------|-----|-------|-------|-------|---------|-----|---|--------|------|------|")
+        for pos in positions:
+            sym = pos.get("symbol", "?")
+            entry = float(pos.get("avg_entry_price", 0))
+            current = float(pos.get("current_price", 0))
+            upl = float(pos.get("unrealized_pl", 0))
+            qty = pos.get("qty", 0)
+
+            # Find tracking data
+            track = growth_tracking.get(sym) or conservative_tracking.get(sym) or {}
+            bot = "growth" if sym in growth_tracking else "conservative" if sym in conservative_tracking else "?"
+            setup = track.get("setup_type", "?")
+            phase = track.get("phase", "?")
+            current_r = 0
+            r_per = track.get("r_per_share", 0)
+            if r_per and r_per > 0:
+                current_r = round((current - entry) / r_per, 2)
+            best_r = track.get("best_gain_r", 0)
+            bars = track.get("bars_held", 0)
+            stop = track.get("current_stop") or track.get("initial_stop") or "?"
+            stop_str = f"${stop:,.2f}" if isinstance(stop, (int, float)) else str(stop)
+
+            lines.append(
+                f"| {sym} | {bot} | {setup} | {phase} | ${entry:,.2f} | ${current:,.2f} "
+                f"| ${upl:+,.2f} | {current_r}R | {best_r}R | {bars} | {stop_str} |"
+            )
+    else:
+        lines.append("- No open positions")
+    lines.append("")
+
+    # ── TODAY'S MANAGEMENT ACTIONS ──
+    lines.append("## Position Management Actions")
+    manage_log = _load_json(resolve_state("growth", "manage_log.json"))
+    manage_actions = manage_log.get("actions", [])
+    if manage_actions:
+        for a in manage_actions:
+            sym = a.get("symbol", "?")
+            action = a.get("action", "?")
+            price = a.get("price")
+            r_val = a.get("r")
+            trail = a.get("trail")
+            stop = a.get("stop") or a.get("current_stop")
+            detail_parts = []
+            if price: detail_parts.append(f"price=${price:,.2f}")
+            if r_val is not None: detail_parts.append(f"R={r_val}")
+            if trail: detail_parts.append(f"trail=${trail:,.2f}")
+            if stop: detail_parts.append(f"stop=${stop:,.2f}" if isinstance(stop, (int, float)) else f"stop={stop}")
+            if a.get("MANUAL_REVIEW"): detail_parts.append("⚠️ MANUAL REVIEW")
+            detail = " | ".join(detail_parts) if detail_parts else ""
+            lines.append(f"- **{sym}**: {action} — {detail}")
+    else:
+        lines.append("- No management actions today")
+    lines.append("")
+
+    # ── TODAY'S RESEARCH SUMMARY ──
+    lines.append("## Research Summary")
+    if candidates:
+        n_candidates = len(candidates.get("candidates", []))
+        n_rejected = len(candidates.get("rejected", []))
+        lines.append(f"- Candidates found: {n_candidates}")
+        lines.append(f"- Rejected: {n_rejected}")
+        lines.append(f"- Regime: {candidates.get('regime_mode', '?')}")
+
+        # Show candidates if any
+        for c in candidates.get("candidates", [])[:10]:
+            lines.append(f"  - **{c.get('symbol')}**: setup={c.get('setup_type', '?')}, "
+                         f"score={c.get('growth_score', '?'):.3f}" if isinstance(c.get('growth_score'), (int, float)) else
+                         f"  - **{c.get('symbol')}**: setup={c.get('setup_type', '?')}")
+
+        # Top rejection reasons
+        rejection_reasons = {}
+        for r in candidates.get("rejected", []):
+            reasons = r.get("reasons", [])
+            for reason in reasons:
+                rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+        if rejection_reasons:
+            lines.append("- **Top rejection reasons:**")
+            for reason, count in sorted(rejection_reasons.items(), key=lambda x: -x[1])[:5]:
+                lines.append(f"  - {reason}: {count}")
+    else:
+        lines.append("- No research data available")
+    lines.append("")
+
+    # ── TODAY'S ORDERS ──
+    lines.append("## Orders Today")
+    order_plan = _load_json(resolve_state("growth", "order_plan.json"))
+    orders = order_plan.get("orders", [])
+    skips = order_plan.get("skips", [])
+    if orders:
+        for o in orders:
+            lines.append(f"- ✅ **{o.get('symbol')}**: {o.get('qty')} shares @ trigger=${o.get('trigger', '?'):.2f}, "
+                         f"stop=${o.get('stop', '?'):.2f}, R/share=${o.get('r_per_share', '?'):.2f}")
+    elif order_plan:
+        lines.append("- No orders placed")
+    else:
+        lines.append("- No order plan data")
+    if skips:
+        lines.append(f"- Skipped: {len(skips)}")
+        for s in skips[:5]:
+            lines.append(f"  - {s.get('symbol', '?')}: {s.get('reason', '?')}")
+    lines.append("")
+
+    # ── CLOSED TRADES TODAY ──
+    lines.append("## Trades Closed Today")
+    # Check multiple possible locations for trade history
+    trade_history_raw = None
+    for th_path in [
+        STATE_SHARED / "trade_history.json",
+        resolve_state("growth", "trade_history.json"),
+        STATE_DIR / "trade_history.json",
+    ]:
+        if th_path.exists():
+            trade_history_raw = _load_json(th_path)
+            break
+
+    # Handle both list format and {trades: [...]} wrapper
+    if isinstance(trade_history_raw, list):
+        trade_list = trade_history_raw
+    elif isinstance(trade_history_raw, dict):
+        trade_list = trade_history_raw.get("trades", [])
+    else:
+        trade_list = []
+
+    if trade_list:
+        todays_closes = [t for t in trade_list if t.get("closed_at", "").startswith(date)]
+        if todays_closes:
+            for t in todays_closes:
+                sym = t.get("symbol", "?")
+                pnl = t.get("pnl")
+                r_mult = t.get("r_multiple")
+                exit_reason = t.get("exit_type") or t.get("exit_reason", "?")
+                entry_p = t.get("entry_price", 0)
+                exit_p = t.get("exit_price", 0)
+                bars = t.get("bars_held", "?")
+                setup = t.get("setup_type", "?")
+                qty = t.get("qty", "?")
+                pnl_str = f"${pnl:+,.2f}" if pnl is not None else "?"
+                r_str = f"{r_mult:.2f}R" if r_mult is not None else "?"
+                lines.append(f"- **{sym}**: {pnl_str} ({r_str}) | exit={exit_reason} | "
+                             f"entry=${entry_p:,.2f} → exit=${exit_p:,.2f} | qty={qty} | {bars} bars | setup={setup}")
+        else:
+            lines.append("- No trades closed today")
+    else:
+        lines.append("- No trade history data")
+    lines.append("")
+
+    # ── BEST/WORST CONTRIBUTORS ──
     top = attribution.get("top_contributors", {})
     if top.get("best"):
-        lines.append("## Best/Worst Contributors")
+        lines.append("## Best/Worst Contributors (All-Time)")
         lines.append("| Symbol | Net PnL |")
         lines.append("|--------|---------|")
         for sym, pnl in top.get("best", [])[:5]:
             lines.append(f"| {sym} | ${pnl:,.2f} |")
         lines.append("")
         if top.get("worst"):
-            lines.append("**Worst:**")
-            for sym, pnl in top.get("worst", [])[:3]:
-                lines.append(f"- {sym}: ${pnl:,.2f}")
+            actual_losers = [(sym, pnl) for sym, pnl in top.get("worst", [])[:3] if pnl < 0]
+            if actual_losers:
+                lines.append("**Worst:**")
+                for sym, pnl in actual_losers:
+                    lines.append(f"- {sym}: ${pnl:,.2f}")
             lines.append("")
 
-    # Incidents
+    # ── OPERATIONAL ISSUES ──
     lines.append("## Operational Issues")
     total_incidents = sum(incidents.values()) if incidents else 0
     if total_incidents == 0:
@@ -92,11 +269,11 @@ def generate_daily_report(analytics=None, attribution=None):
                 lines.append(f"- ⚠️ {k}: {v}")
     lines.append("")
 
-    # Manual review
+    # ── MANUAL REVIEW ──
     lines.append("## Open Manual-Review Items")
     health_path = STATE_SHARED / "health_summary.json"
     if health_path.exists():
-        health = json.loads(health_path.read_text())
+        health = _load_json(health_path)
         flags = health.get("manual_review_flags", [])
         if flags:
             for f in flags:
@@ -107,7 +284,43 @@ def generate_daily_report(analytics=None, attribution=None):
         lines.append("- Health summary not available")
     lines.append("")
 
-    # Insufficient evidence
+    # ── AI REVIEW ──
+    lines.append("## AI Recommendations")
+    ai_review = _load_json(STATE_SHARED / "ai_review.json")
+    recs = ai_review.get("recommendations", [])
+    if recs:
+        for r in recs:
+            conf = r.get("confidence", "?")
+            action = r.get("next_action", "?")
+            lines.append(f"- [{conf}] **{r.get('recommendation', '?')}** → {action}")
+            lines.append(f"  - {r.get('reason', '')}")
+    else:
+        lines.append("- No recommendations")
+    lines.append("")
+
+    # ── EQUITY CURVE ──
+    lines.append("## Equity Snapshot")
+    equity_curve = _load_json(STATE_SHARED / "equity_curve.json")
+    if isinstance(equity_curve, list) and len(equity_curve) >= 2:
+        latest = equity_curve[-1]
+        prev = equity_curve[-2]
+        eq_now = latest.get("equity", 0)
+        eq_prev = prev.get("equity", 0)
+        day_change = eq_now - eq_prev
+        day_pct = (day_change / eq_prev * 100) if eq_prev else 0
+        total_change = eq_now - 20000  # starting capital
+        total_pct = (total_change / 20000 * 100)
+        lines.append(f"- Today: ${eq_now:,.2f} ({day_change:+,.2f} / {day_pct:+.2f}%)")
+        lines.append(f"- Total return: ${total_change:+,.2f} ({total_pct:+.2f}%)")
+        lines.append(f"- Data points: {len(equity_curve)} days")
+    elif isinstance(equity_curve, list) and len(equity_curve) == 1:
+        eq_now = equity_curve[-1].get("equity", 0)
+        lines.append(f"- Today: ${eq_now:,.2f}")
+    else:
+        lines.append("- No equity curve data yet")
+    lines.append("")
+
+    # ── INSUFFICIENT EVIDENCE ──
     lines.append("## Insufficient Evidence")
     if metrics.get("total_trades", 0) < 20:
         lines.append(f"- Only {metrics.get('total_trades', 0)} closed trades. Need 20+ for reliable metrics.")

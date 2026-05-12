@@ -71,9 +71,11 @@ This prevents oversized positions in volatile names even when the per-trade risk
 ### Trail Upgrades at Milestones
 Once trailing is active, the bot progressively tightens the trail as R increases:
 - **2.5R + 5 bars in profit**: activate trailing at 3.0×ATR
-- **3R+**: tighten to 2.0×ATR
+- **3R+**: tighten to 2.0×ATR (tight trailing)
+- **4R+**: tighten to 2.0×ATR (first upgrade checkpoint)
 - **5R+**: tighten to 1.75×ATR
 - **6R+**: tighten to 1.5×ATR
+- **8R+**: tighten to 1.5×ATR (final lock-in)
 
 Each upgrade fires only once per threshold and uses cancel-and-verify before replacing.
 
@@ -97,6 +99,8 @@ The growth bot has multiple layers of position protection:
    - ATR fallback estimate (flags for `MANUAL_REVIEW`)
 
 5. **Stop validation**: Before placing any recovery stop, validates that stop price > 0, stop < current price, and qty > 0.
+
+6. **Broker stop-price sync**: On every manage run, trailing stop prices and high-water marks are synced from broker order state into local tracking, ensuring local data always reflects actual Alpaca stop levels.
 
 ### Gap-Up Filter
 Skips entries when the current price is already >3% above the trigger price (configurable via `gap_up_max_pct`). Prevents chasing extended breakouts.
@@ -180,6 +184,10 @@ The conservative bot trades confirmed pullbacks in broad uptrends with strict co
 
 ## How The Bot Works
 
+### State Isolation
+
+Each bot has its own namespaced state directory (`state/conservative/`, `state/growth/`) to prevent cross-bot file collisions. Shared data like equity curves, performance stats, and AI review history lives in `state/shared/`. A `state_path(bot, name)` helper ensures consistent path resolution.
+
 ### Daily Cycle (Fully Autonomous)
 
 | Time (ET) | What Happens |
@@ -243,16 +251,52 @@ scripts/
   strategy_manager.py      # Safe parameter changes with snapshots
   journal.py               # Daily journal writer
   performance.py           # Performance metrics calculator
-  slack_bot.py             # Slack command interface (/positions, /sell)
-  backtest.py              # Historical backtester
-  backtest_growth.py       # Growth bot backtester
-  common.py                # Shared utilities (API, sizing, alerts)
+  slack_bot.py             # Slack command interface (/positions, /sell, /summary)
+  common.py                # Shared utilities (API, sizing, alerts) + compatibility facade
+  reconcile.py             # Broker-vs-local state reconciliation
+  healthcheck.py           # System health checks
   backup.sh                # Local + S3 backup script
-  run_daily.sh             # Manual cron wrapper (legacy)
+  analytics/               # Analytics pipeline
+    pipeline.py            # Daily analytics orchestrator
+    metrics.py             # Performance metrics computation
+    attribution.py         # Setup-level and grouped attribution
+    ai_review.py           # AI review recommendations (daily + cumulative history)
+    reports.py             # Daily report generation
+    regime.py              # Market regime analysis
+    experiments.py         # A/B experiment tracking
+  growth/                  # Growth bot modules (refactored)
+    decisions.py           # Pure phase-transition decision logic (no broker calls)
+    broker_exec.py         # Broker execution helpers (cancel, replace, submit)
+    recovery.py            # Metadata reconstruction and recovery helpers
+  infra/                   # Infrastructure modules (refactored from common.py)
+    paths.py               # Path resolution helpers
+    jsonio.py              # JSON file I/O
+    logging_utils.py       # Structured JSONL logging
+    locks.py               # Job locks and deduplication
+    dedupe.py              # Order deduplication
+    broker.py              # Alpaca API helpers
+    env.py                 # Environment and config loading
+    time_utils.py          # Timezone and market-time helpers
+    sizing.py              # Position sizing helpers
+    config.py              # Config loading
+    alerts.py              # Slack/webhook alert helpers
+  backtest/                # Backtesting modules
+    growth.py              # Growth bot backtester
+    conservative.py        # Conservative bot backtester
+    matrix.py              # Multi-variant backtest runner
+  tests/                   # Test suite
+    test_analytics.py      # Analytics pipeline tests
+    test_recovery.py       # Recovery and reconciliation tests
 state/                     # Runtime state (auto-populated)
+  conservative/            # Conservative bot state files
+  growth/                  # Growth bot state files
+  shared/                  # Shared analytics, equity curve, AI review history
+  locks/                   # Job lock files
+  logs/                    # Structured JSONL daily logs
 journal/                   # Daily journals (auto-populated)
 prompts/                   # Prompt templates
 growthBot/                 # Growth bot design docs
+docs/                      # Architecture and hardening docs
 ```
 
 ## Quick Start
@@ -418,6 +462,20 @@ Every trade captures rich metadata for post-hoc analysis and future strategy ref
 | **Exit reason** | Stop, trail, time stop, or manual |
 
 This data feeds `learning.py` for grouped performance stats (e.g., win rate by setup, avg R by volatility bucket) and will drive future setup-specific ranking once 20–30 trades provide statistical significance.
+
+### AI Review History
+
+Daily AI reviews are saved both as a latest snapshot (`ai_review.json`) and appended to a cumulative history (`ai_review_history.json`, up to 365 days). This allows the learning module to track recommendation trends over time — e.g., "slippage warning appeared 5 times in 30 days" — and measure whether prior recommendations led to improvements.
+
+### Structured Audit Logging
+
+Every significant action is logged to daily JSONL files (`state/logs/YYYY-MM-DD.jsonl`) with:
+- Timestamp, bot name, stage, symbol
+- Action taken and reason code
+- Before/after state snapshots
+- Order IDs and error details
+
+Standard reason codes include: `ENTRY_ACCEPTED`, `ENTRY_REJECTED_RELVOL`, `STOP_REPLACED`, `BROKER_STATE_MISMATCH`, `MANUAL_REVIEW_REQUIRED`, etc.
 
 ## Disclaimer
 
