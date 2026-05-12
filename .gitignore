@@ -14,6 +14,8 @@ state/growth/*.json
 state/growth/*.csv
 state/shared/*.json
 state/shared/*.md
+!state/shared/report_daily_*.md
+!state/shared/report_weekly_*.md
 state/locks/
 state/logs/
 !state/.gitkeep
@@ -21,6 +23,7 @@ state/logs/
 
 # Journal entries (generated at runtime)
 journal/*.md
+!journal/2026-*.md
 journal/*.log
 !journal/.gitkeep
 

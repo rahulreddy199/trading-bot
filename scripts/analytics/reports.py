@@ -320,6 +320,137 @@ def generate_daily_report(analytics=None, attribution=None):
         lines.append("- No equity curve data yet")
     lines.append("")
 
+    # ── MARKET CONTEXT (for AI pattern learning) ──
+    lines.append("## Market Context")
+    try:
+        import yfinance as yf
+        spy_data = yf.download("SPY", period="2d", interval="1d", progress=False)
+        qqq_data = yf.download("QQQ", period="2d", interval="1d", progress=False)
+        if not spy_data.empty and len(spy_data) >= 1:
+            spy_close = float(spy_data["Close"].iloc[-1].iloc[0]) if hasattr(spy_data["Close"].iloc[-1], 'iloc') else float(spy_data["Close"].iloc[-1])
+            spy_pct = 0
+            if len(spy_data) >= 2:
+                spy_prev = float(spy_data["Close"].iloc[-2].iloc[0]) if hasattr(spy_data["Close"].iloc[-2], 'iloc') else float(spy_data["Close"].iloc[-2])
+                spy_pct = ((spy_close - spy_prev) / spy_prev) * 100
+            lines.append(f"- SPY: ${spy_close:,.2f} ({spy_pct:+.2f}%)")
+        if not qqq_data.empty and len(qqq_data) >= 1:
+            qqq_close = float(qqq_data["Close"].iloc[-1].iloc[0]) if hasattr(qqq_data["Close"].iloc[-1], 'iloc') else float(qqq_data["Close"].iloc[-1])
+            qqq_pct = 0
+            if len(qqq_data) >= 2:
+                qqq_prev = float(qqq_data["Close"].iloc[-2].iloc[0]) if hasattr(qqq_data["Close"].iloc[-2], 'iloc') else float(qqq_data["Close"].iloc[-2])
+                qqq_pct = ((qqq_close - qqq_prev) / qqq_prev) * 100
+            lines.append(f"- QQQ: ${qqq_close:,.2f} ({qqq_pct:+.2f}%)")
+    except Exception:
+        lines.append("- Market data unavailable")
+    lines.append("")
+
+    # ── POSITION INTRADAY CONTEXT ──
+    lines.append("## Position Price Context")
+    if positions and growth_tracking:
+        for pos in positions:
+            sym = pos.get("symbol", "?")
+            track = growth_tracking.get(sym) or conservative_tracking.get(sym) or {}
+            current = float(pos.get("current_price", 0))
+            entry = float(pos.get("avg_entry_price", 0))
+            stop = track.get("current_stop") or track.get("initial_stop")
+            best_price = track.get("best_price", 0)
+
+            # Distance to stop (how close to getting stopped out)
+            if stop and current > 0:
+                stop_distance_pct = ((current - stop) / current) * 100
+                lines.append(f"- **{sym}**: price=${current:,.2f} | "
+                             f"stop distance={stop_distance_pct:.1f}% | "
+                             f"best price=${best_price:,.2f} | "
+                             f"from best={((current - best_price) / best_price * 100):+.1f}%")
+            else:
+                lines.append(f"- **{sym}**: price=${current:,.2f}")
+    else:
+        lines.append("- No position data")
+    lines.append("")
+
+    # ── NEAR-MISS CANDIDATES (almost qualified) ──
+    lines.append("## Near-Miss Candidates")
+    if candidates:
+        rejected = candidates.get("rejected", [])
+        # Find stocks that failed only 1 filter (closest to qualifying)
+        near_misses = [r for r in rejected if len(r.get("reasons", [])) == 1]
+        if near_misses:
+            for nm in near_misses[:5]:
+                sym = nm.get("symbol", "?")
+                reasons = nm.get("reasons", [])
+                lines.append(f"- **{sym}**: missed by → {reasons[0]}")
+        else:
+            # Show stocks with fewest rejections
+            sorted_rej = sorted(rejected, key=lambda r: len(r.get("reasons", [])))
+            for nm in sorted_rej[:3]:
+                sym = nm.get("symbol", "?")
+                reasons = nm.get("reasons", [])
+                lines.append(f"- **{sym}**: {len(reasons)} filters failed → {', '.join(reasons[:3])}")
+        lines.append("")
+        lines.append(f"_({len(rejected)} total rejected out of {len(rejected) + len(candidates.get('candidates', []))} scanned)_")
+    else:
+        lines.append("- No research data")
+    lines.append("")
+
+    # ── CORRELATION BLOCKS ──
+    lines.append("## Correlation & Diversification")
+    if order_plan:
+        corr_blocks = [s for s in skips if "correlation" in s.get("reason", "")]
+        if corr_blocks:
+            for cb in corr_blocks:
+                corr_with = cb.get("correlated_with", [])
+                corr_names = ", ".join([f"{c.get('symbol')}({c.get('correlation',0):.2f})" for c in corr_with]) if corr_with else "?"
+                lines.append(f"- **{cb.get('symbol', '?')}** blocked: correlated with {corr_names}")
+        else:
+            lines.append("- No correlation blocks today")
+    else:
+        lines.append("- No order data")
+    # Current open position sectors
+    if growth_tracking:
+        open_sectors = {}
+        watchlist = _load_json(Path(SCRIPTS_DIR).parent / "config" / "watchlist_growth.json")
+        sector_map = {}
+        if watchlist:
+            for s in watchlist.get("symbols", []):
+                sector_map[s["ticker"]] = s.get("sector", "?")
+        for sym in growth_tracking:
+            if growth_tracking[sym].get("phase") not in ("pending", "exit_pending", None):
+                sector = sector_map.get(sym, "?")
+                open_sectors[sector] = open_sectors.get(sector, 0) + 1
+        if open_sectors:
+            sectors_str = ", ".join([f"{s}: {c}" for s, c in sorted(open_sectors.items())])
+            lines.append(f"- Open by sector: {sectors_str}")
+    lines.append("")
+
+    # ── TRADING ACTIVITY SUMMARY ──
+    lines.append("## Trading Activity Summary")
+    # Days since last entry
+    if trade_list:
+        all_entries = sorted([t.get("closed_at", "") for t in trade_list if t.get("closed_at")])
+    # Count from order plans
+    last_orders = _load_json(resolve_state("growth", "last_orders.json"))
+    last_order_date = last_orders.get("date") if isinstance(last_orders, dict) else None
+    if last_order_date:
+        lines.append(f"- Last order placed: {last_order_date}")
+    total_closed = len(trade_list) if trade_list else 0
+    total_wins = sum(1 for t in trade_list if (t.get("pnl") or 0) > 0) if trade_list else 0
+    total_losses = sum(1 for t in trade_list if (t.get("pnl") or 0) < 0) if trade_list else 0
+    lines.append(f"- Total closed trades: {total_closed} (W:{total_wins} / L:{total_losses})")
+    open_count = len([t for t in (growth_tracking or {}).values()
+                      if t.get("phase") not in ("pending", "exit_pending", None)])
+    max_pos = 5  # from strategy
+    lines.append(f"- Open positions: {open_count}/{max_pos} slots used")
+    # Setups traded
+    if trade_list:
+        setup_counts = {}
+        for t in trade_list:
+            st = t.get("setup_type") or t.get("source", "unknown")
+            setup_counts[st] = setup_counts.get(st, 0) + 1
+        if setup_counts:
+            setups_str = ", ".join([f"{s}: {c}" for s, c in sorted(setup_counts.items(), key=lambda x: -x[1])])
+            lines.append(f"- Trades by setup: {setups_str}")
+    lines.append("")
+
     # ── INSUFFICIENT EVIDENCE ──
     lines.append("## Insufficient Evidence")
     if metrics.get("total_trades", 0) < 20:
