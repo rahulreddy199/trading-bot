@@ -14,11 +14,13 @@ from datetime import datetime, timedelta
 
 from common import (
     STATE_DIR,
+    STATE_SHARED,
     get_account,
     get_orders,
     get_positions,
     load_strategy,
     now_iso,
+    resolve_state,
     save_json,
     today_str,
     write_heartbeat,
@@ -28,7 +30,11 @@ from common import (
 def load_trade_history():
     path = STATE_DIR / "trade_history.json"
     if path.exists():
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        # Handle both {"trades": [...]} and [...] formats
+        if isinstance(data, list):
+            return {"trades": data, "last_checked_order_id": None}
+        return data
     return {"trades": [], "last_checked_order_id": None}
 
 
@@ -37,7 +43,8 @@ def save_trade_history(history):
 
 
 def load_tracking():
-    path = STATE_DIR / "position_tracking.json"
+    """Load growth position tracking."""
+    path = resolve_state("growth", "position_tracking.json")
     if path.exists():
         return json.loads(path.read_text())
     return {}
@@ -195,8 +202,8 @@ def main():
 
     save_json(STATE_DIR / "performance.json", performance)
 
-    # Append to equity curve (daily snapshot)
-    curve_path = STATE_DIR / "equity_curve.json"
+    # Append to equity curve (daily snapshot) — in shared/ for reports
+    curve_path = STATE_SHARED / "equity_curve.json"
     if curve_path.exists():
         curve = json.loads(curve_path.read_text())
     else:
