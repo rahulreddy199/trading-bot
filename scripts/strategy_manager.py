@@ -12,7 +12,7 @@ from common import CONFIG_DIR, STATE_DIR, save_json, load_json
 HISTORY_DIR = CONFIG_DIR / "strategy_history"
 TUNING_LOG = STATE_DIR / "tuning_log.json"
 GUARDRAILS_PATH = CONFIG_DIR / "guardrails.json"
-STRATEGY_PATH = CONFIG_DIR / "strategy.json"
+STRATEGY_PATH = CONFIG_DIR / "strategy_growth.json"
 
 
 def load_guardrails():

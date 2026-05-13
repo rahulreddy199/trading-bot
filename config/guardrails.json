@@ -1,59 +1,59 @@
 {
-  "version": "1.0",
-  "description": "Safety guardrails for autonomous strategy tuning",
+  "version": "1.1",
+  "description": "Safety guardrails for autonomous strategy tuning (growth bot)",
   "min_trades_before_tuning": 30,
   "tuning_cooldown_weeks": 2,
   "max_parameters_changed_per_cycle": 2,
   "require_consecutive_underperformance_weeks": 3,
   "parameters": {
     "risk_per_trade": {
-      "path": "breadth_modes.full_risk.risk_per_trade",
-      "baseline": 0.005,
+      "path": "regime.full_risk.risk_per_trade",
+      "baseline": 0.0075,
       "min": 0.005,
       "max": 0.02,
       "max_step": 0.002
     },
     "risk_per_trade_reduced": {
-      "path": "breadth_modes.reduced_risk.risk_per_trade",
-      "baseline": 0.005,
+      "path": "regime.reduced_risk.risk_per_trade",
+      "baseline": 0.004,
       "min": 0.003,
       "max": 0.01,
       "max_step": 0.001
     },
     "trailing_atr_multiplier": {
-      "path": "trailing_atr_multiplier",
+      "path": "exit.trailing_atr_multiplier",
       "baseline": 3.0,
       "min": 2.0,
       "max": 4.0,
       "max_step": 0.3
     },
     "atr_stop_multiplier": {
-      "path": "atr_stop_multiplier",
-      "baseline": 2.0,
+      "path": "stop.atr_stop_multiplier",
+      "baseline": 2.5,
       "min": 1.5,
-      "max": 3.0,
+      "max": 3.5,
       "max_step": 0.25
     },
-    "pullback_days_max": {
-      "path": "pullback_days_max",
-      "baseline": 12,
+    "phase_protected_r": {
+      "path": "exit.phase_protected_r",
+      "baseline": 1.5,
+      "min": 1.0,
+      "max": 2.5,
+      "max_step": 0.25
+    },
+    "phase_trailing_r": {
+      "path": "exit.phase_trailing_r",
+      "baseline": 2.5,
+      "min": 1.5,
+      "max": 4.0,
+      "max_step": 0.5
+    },
+    "time_stop_bars": {
+      "path": "exit.time_stop_bars",
+      "baseline": 10,
       "min": 5,
       "max": 15,
       "max_step": 2
-    },
-    "pullback_max_distance_from_sma20_pct": {
-      "path": "pullback_max_distance_from_sma20_pct",
-      "baseline": 0.07,
-      "min": 0.04,
-      "max": 0.12,
-      "max_step": 0.02
-    },
-    "reward_to_risk": {
-      "path": "reward_to_risk",
-      "baseline": 2.0,
-      "min": 1.5,
-      "max": 3.0,
-      "max_step": 0.25
     }
   },
   "tuning_enabled": false,
@@ -67,4 +67,3 @@
     "description": "If portfolio drawdown exceeds this threshold, halt all new entries and alert"
   }
 }
-

@@ -8,7 +8,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from common import STATE_DIR, send_alert
+from common import STATE_DIR, send_alert, resolve_state
 
 
 def try_reconstruct_metadata(symbol, track):
@@ -19,8 +19,10 @@ def try_reconstruct_metadata(symbol, track):
     reconstructed = False
     source = None
 
-    # 1. last_orders_growth.json
-    last_orders_path = STATE_DIR / "last_orders_growth.json"
+    # 1. last_orders (namespaced then legacy)
+    last_orders_path = resolve_state("growth", "last_orders.json")
+    if not last_orders_path.exists():
+        last_orders_path = STATE_DIR / "last_orders_growth.json"
     if last_orders_path.exists():
         try:
             orders = json.loads(last_orders_path.read_text())
@@ -35,9 +37,11 @@ def try_reconstruct_metadata(symbol, track):
         except Exception:
             pass
 
-    # 2. order_plan_growth.json
+    # 2. order_plan (namespaced then legacy)
     if track.get("r_per_share") is None:
-        order_plan_path = STATE_DIR / "order_plan_growth.json"
+        order_plan_path = resolve_state("growth", "order_plan.json")
+        if not order_plan_path.exists():
+            order_plan_path = STATE_DIR / "order_plan_growth.json"
         if order_plan_path.exists():
             try:
                 plan = json.loads(order_plan_path.read_text())
@@ -50,9 +54,11 @@ def try_reconstruct_metadata(symbol, track):
             except Exception:
                 pass
 
-    # 3. candidates_growth.json
+    # 3. candidates (namespaced then legacy)
     if track.get("r_per_share") is None or track.get("atr14_at_entry") is None:
-        candidates_path = STATE_DIR / "candidates_growth.json"
+        candidates_path = resolve_state("growth", "candidates.json")
+        if not candidates_path.exists():
+            candidates_path = STATE_DIR / "candidates_growth.json"
         if candidates_path.exists():
             try:
                 data = json.loads(candidates_path.read_text())

@@ -955,8 +955,8 @@ def reconcile_after_action(action_name):
         mismatches = []
 
         # Categorize local tracking by phase
-        # Known phases: pending, initial, breakeven, trailing, exit_pending, exited
-        OPEN_PHASES = {"initial", "breakeven", "trailing"}
+        # Known phases: pending, initial, protected, trailing, exit_pending, closed
+        OPEN_PHASES = {"initial", "protected", "trailing"}
         local_pending = {sym for sym, d in tracking.items() if isinstance(d, dict) and d.get("phase") == "pending"}
         local_open = {sym for sym, d in tracking.items() if isinstance(d, dict) and d.get("phase") in OPEN_PHASES}
         local_exit_pending = {sym for sym, d in tracking.items() if isinstance(d, dict) and d.get("phase") == "exit_pending"}

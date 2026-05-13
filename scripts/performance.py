@@ -80,7 +80,7 @@ def detect_closed_trades(history):
         entry_price = None
         r_per_share = None
         if symbol in tracking:
-            entry_price = tracking[symbol].get("entry_price") or tracking[symbol].get("planned_entry")
+            entry_price = tracking[symbol].get("actual_entry") or tracking[symbol].get("planned_entry")
             r_per_share = tracking[symbol].get("r_per_share")
 
         if entry_price is None:

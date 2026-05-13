@@ -219,7 +219,7 @@ def _run_trade_logic(lock, dry_run):
     if not clock.get("is_open", False):
         plan = {"timestamp": now_iso(), "orders": [], "skips": [{"reason": "market_closed"}]}
         save_json(order_plan_path, plan)
-        write_heartbeat("trade", "ok", {"orders": 0, "reason": "market_closed"})
+        write_heartbeat("trade_growth", "ok", {"orders": 0, "reason": "market_closed"})
         print("Trade skipped: market closed")
         return
 
@@ -266,14 +266,14 @@ def _run_trade_logic(lock, dry_run):
     if not allow_entries:
         plan["skips"].append({"reason": f"regime_{regime_mode}"})
         save_json(order_plan_path, plan)
-        write_heartbeat("trade", "ok", {"orders": 0, "reason": regime_mode})
+        write_heartbeat("trade_growth", "ok", {"orders": 0, "reason": regime_mode})
         print(f"Trade skipped: {regime_mode}")
         return
 
     if remaining_slots <= 0:
         plan["skips"].append({"reason": "max_positions_reached"})
         save_json(order_plan_path, plan)
-        write_heartbeat("trade", "ok", {"orders": 0, "reason": "max_positions"})
+        write_heartbeat("trade_growth", "ok", {"orders": 0, "reason": "max_positions"})
         print("Trade skipped: max positions")
         return
 
@@ -518,11 +518,10 @@ def _run_trade_logic(lock, dry_run):
         remaining_slots -= 1
         blocked_symbols.add(symbol)
 
-    save_json(order_plan_path, plan)
-    save_json(STATE_DIR / "last_orders_growth.json", plan["orders"])
-    # Also save to namespaced path
+    # Save to namespaced paths (primary) and legacy paths (compat)
     save_json(state_path("growth", "order_plan.json"), plan)
     save_json(state_path("growth", "last_orders.json"), plan["orders"])
+    save_json(STATE_DIR / "last_orders_growth.json", plan["orders"])
 
     write_heartbeat("trade_growth", "ok", {
         "bot_name": "growth",

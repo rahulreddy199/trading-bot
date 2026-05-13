@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from common import JOURNAL_DIR, STATE_DIR, get_account, get_orders, get_positions, today_str, write_heartbeat
+from common import JOURNAL_DIR, STATE_DIR, get_account, get_orders, get_positions, today_str, write_heartbeat, resolve_state
 
 
 def main():
@@ -9,19 +9,26 @@ def main():
     account = get_account()
     positions = get_positions()
     orders = get_orders(status="all", limit=20)
-    candidates = STATE_DIR / "candidates.json"
-    order_plan = STATE_DIR / "order_plan.json"
-    manage_log = STATE_DIR / "manage_log.json"
 
-    # Growth bot state files
-    candidates_growth = STATE_DIR / "candidates_growth.json"
-    order_plan_growth = STATE_DIR / "order_plan_growth.json"
-    manage_log_growth = STATE_DIR / "manage_log_growth.json"
-    tracking_growth = STATE_DIR / "position_tracking_growth.json"
+    # Growth bot state files (primary)
+    candidates_growth_path = resolve_state("growth", "candidates.json")
+    order_plan_growth_path = resolve_state("growth", "order_plan.json")
+    manage_log_growth_path = resolve_state("growth", "manage_log.json")
+    tracking_growth_path = resolve_state("growth", "position_tracking.json")
+
+    # Legacy fallback paths
+    if not candidates_growth_path.exists():
+        candidates_growth_path = STATE_DIR / "candidates_growth.json"
+    if not order_plan_growth_path.exists():
+        order_plan_growth_path = STATE_DIR / "order_plan_growth.json"
+    if not manage_log_growth_path.exists():
+        manage_log_growth_path = STATE_DIR / "manage_log_growth.json"
+    if not tracking_growth_path.exists():
+        tracking_growth_path = STATE_DIR / "position_tracking_growth.json"
 
     # Read per-job heartbeats
     hb_parts = []
-    for job in ("research", "trade", "manage", "research_growth", "trade_growth", "manage_growth"):
+    for job in ("research_growth", "trade_growth", "manage_growth", "journal", "performance"):
         hb_path = STATE_DIR / f"heartbeat_{job}.json"
         if hb_path.exists():
             hb_data = json.loads(hb_path.read_text())
@@ -40,7 +47,6 @@ def main():
     # P&L summary
     lines.append("## P&L")
     total_unrealized = sum(float(p.get("unrealized_pl", 0)) for p in positions)
-    total_unrealized_pct = sum(float(p.get("unrealized_plpc", 0)) for p in positions)
     lines.append(f"- Open P&L: ${total_unrealized:,.2f}")
     lines.append(f"- Positions: {len(positions)}")
     # Check for today's closed trades
@@ -66,46 +72,48 @@ def main():
         lines.append("- None")
     lines.append("")
 
-    # Surface position management actions and failures
+    # Growth position management actions
     lines.append("## Position management")
-    if manage_log.exists():
-        mlog = json.loads(manage_log.read_text())
-        actions = mlog.get("actions", [])
-        if actions:
-            failures = [a for a in actions if "failed" in a.get("action", "") or a.get("MANUAL_REVIEW_REQUIRED")]
-            holds = [a for a in actions if a.get("action", "").startswith("hold")]
-            exits = [a for a in actions if "trailing" in a.get("action", "") or "breakeven" in a.get("action", "") or "exit" in a.get("action", "")]
+    if manage_log_growth_path.exists():
+        try:
+            mlog = json.loads(manage_log_growth_path.read_text())
+            actions = mlog.get("actions", [])
+            if actions:
+                failures = [a for a in actions if "failed" in a.get("action", "") or a.get("MANUAL_REVIEW")]
+                holds = [a for a in actions if a.get("action", "").startswith("hold")]
+                exits = [a for a in actions if any(k in a.get("action", "") for k in ("trailing", "protected", "exit", "time_stop"))]
 
-            if failures:
-                lines.append("### ⚠️ FAILURES REQUIRING REVIEW")
-                for f in failures:
-                    lines.append(f"- **{f.get('symbol', 'N/A')}**: {f.get('action')} — {f.get('error', f.get('NOTE', ''))}")
-                lines.append("")
+                if failures:
+                    lines.append("### ⚠️ FAILURES REQUIRING REVIEW")
+                    for f in failures:
+                        lines.append(f"- **{f.get('symbol', 'N/A')}**: {f.get('action')} — {f.get('error', '')}")
+                    lines.append("")
 
-            if exits:
-                lines.append("### Exits & trailing stops")
-                for e in exits:
-                    lines.append(f"- {e.get('symbol', 'N/A')}: {e.get('action')}")
-                lines.append("")
+                if exits:
+                    lines.append("### Phase transitions & exits")
+                    for e in exits:
+                        lines.append(f"- {e.get('symbol', 'N/A')}: {e.get('action')}")
+                    lines.append("")
 
-            if holds:
-                lines.append("### Holding")
-                for h in holds:
-                    target_key = "target_1r" if "target_1r" in h else "target_2r"
-                    pct_key = "pct_to_1r" if "pct_to_1r" in h else "pct_to_2r"
-                    lines.append(f"- {h.get('symbol')}: {h.get('action')} | price={h.get('current_price')} target={h.get(target_key)} ({h.get(pct_key)}% away)")
+                if holds:
+                    lines.append("### Holding")
+                    for h in holds:
+                        lines.append(f"- {h.get('symbol')}: {h.get('action')} | price={h.get('price')} R={h.get('r')} bars={h.get('bars')} stop={h.get('current_stop')}")
+                    lines.append("")
+            else:
+                lines.append("- No positions to manage")
                 lines.append("")
-        else:
-            lines.append("- No positions to manage")
+        except Exception:
+            lines.append("- Error reading manage log")
             lines.append("")
     else:
-        lines.append("- manage_log.json not found (manage.py may not have run)")
+        lines.append("- manage_log not found (manage_growth.py may not have run)")
         lines.append("")
 
     lines.append("## Files")
-    lines.append(f"- Candidates file exists: {candidates.exists()}")
-    lines.append(f"- Order plan file exists: {order_plan.exists()}")
-    lines.append(f"- Manage log exists: {manage_log.exists()}")
+    lines.append(f"- Candidates file exists: {candidates_growth_path.exists()}")
+    lines.append(f"- Order plan file exists: {order_plan_growth_path.exists()}")
+    lines.append(f"- Manage log exists: {manage_log_growth_path.exists()}")
     lines.append(f"- Heartbeats: {', '.join(hb_parts) if hb_parts else 'none found'}")
     lines.append("")
 
@@ -128,24 +136,16 @@ def main():
                 lines.append(f"- Last 30d trades: {last_30['total_trades']} | P&L: ${last_30.get('total_pnl', 0):,.2f}")
             lines.append("")
 
-    lines.append("## Notes")
-    lines.append("- Review any skipped trades and confirm they were blocked for a good reason.")
-    lines.append("- Check position management failures above — these need manual intervention.")
-    lines.append("- Compare paper fills with market prices before switching to live.")
-
-    # ── GROWTH BOT SECTION ──
-    lines.append("")
+    # ── GROWTH BOT POSITIONS ──
     lines.append("---")
     lines.append("")
-    lines.append("## Growth Bot")
+    lines.append("## Growth Bot Positions")
 
     # Growth tracking state
-    if tracking_growth.exists():
+    if tracking_growth_path.exists():
         try:
-            gt = json.loads(tracking_growth.read_text())
+            gt = json.loads(tracking_growth_path.read_text())
             if gt:
-                lines.append("")
-                lines.append("### Growth positions")
                 for sym, tr in gt.items():
                     phase = tr.get("phase", "?")
                     best_r = tr.get("best_gain_r", 0)
@@ -161,33 +161,24 @@ def main():
     else:
         lines.append("- No growth tracking file")
 
-    # Growth manage log
-    if manage_log_growth.exists():
-        try:
-            mlog_g = json.loads(manage_log_growth.read_text())
-            g_actions = mlog_g.get("actions", [])
-            g_failures = [a for a in g_actions if "failed" in a.get("action", "") or a.get("MANUAL_REVIEW")]
-            if g_failures:
-                lines.append("")
-                lines.append("### ⚠️ Growth failures requiring review")
-                for f in g_failures:
-                    lines.append(f"- **{f.get('symbol', 'N/A')}**: {f.get('action')} — {f.get('error', '')}")
-        except Exception:
-            pass
-
     # Growth candidates summary
-    if candidates_growth.exists():
+    if candidates_growth_path.exists():
         try:
-            cg = json.loads(candidates_growth.read_text())
+            cg = json.loads(candidates_growth_path.read_text())
             regime = cg.get("regime_mode", "?")
             cands = cg.get("candidates", [])
             lines.append("")
-            lines.append(f"### Growth research: regime={regime}, candidates={len(cands)}")
+            lines.append(f"### Research: regime={regime}, candidates={len(cands)}")
             for c in cands[:5]:
                 lines.append(f"- {c['symbol']}: {c.get('setup_type')} score={c.get('score')}")
         except Exception:
             pass
 
+    lines.append("")
+    lines.append("## Notes")
+    lines.append("- Review any skipped trades and confirm they were blocked for a good reason.")
+    lines.append("- Check position management failures above — these need manual intervention.")
+    lines.append("- Compare paper fills with market prices before switching to live.")
     lines.append("")
 
     path = JOURNAL_DIR / f"{date}.md"

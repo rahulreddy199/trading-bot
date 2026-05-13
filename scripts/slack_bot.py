@@ -106,7 +106,6 @@ def handle_positions(ack, respond):
 def _record_manual_sell(symbol, qty, avg_entry, exit_price, pnl, order_id, client_order_id):
     """Record manual sell in tracking + trade history for learning module."""
     now = now_iso()
-    date_str = datetime.now(MARKET_TZ).strftime("%Y-%m-%d")
 
     # Update position tracking
     for tracking_file in ["position_tracking_growth.json"]:
@@ -140,12 +139,17 @@ def _record_manual_sell(symbol, qty, avg_entry, exit_price, pnl, order_id, clien
                 "exit_client_order_id": client_order_id,
             }
 
-            # Append to trade history
+            # Append to trade history (format: {"trades": [...]})
             history_path = STATE_DIR / "trade_history.json"
-            history = load_json(history_path) if history_path.exists() else []
-            if not isinstance(history, list):
-                history = []
-            history.append(trade_record)
+            if history_path.exists():
+                raw = load_json(history_path)
+                if isinstance(raw, dict):
+                    history = raw
+                else:
+                    history = {"trades": raw if isinstance(raw, list) else []}
+            else:
+                history = {"trades": []}
+            history["trades"].append(trade_record)
             save_json(history_path, history)
 
             # Remove from tracking
@@ -237,7 +241,7 @@ def handle_status(ack, respond):
 
         # Read heartbeats
         hb_lines = []
-        for job in ("research", "trade", "manage"):
+        for job in ("research_growth", "trade_growth", "manage_growth", "journal", "performance"):
             hb_path = STATE_DIR / f"heartbeat_{job}.json"
             if hb_path.exists():
                 hb = json.loads(hb_path.read_text())
