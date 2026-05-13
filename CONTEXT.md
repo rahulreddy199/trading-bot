@@ -1,6 +1,6 @@
 # Trading Bot - Project Context & Status
 
-## Last Updated: May 12, 2026
+## Last Updated: May 12, 2026 (evening)
 
 ## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only
 
@@ -9,7 +9,8 @@
 - **Growth bot is the sole production bot** — conservative bot archived to `scripts/legacy/`
 - **3 trades entered**, 1 closed (MU: +$323.36, +2.79R trailing stop exit)
 - **2 positions open**: AMD (continuation, initial phase), SMH (breakout, trailing phase)
-- **Current equity**: ~$20,500
+- **Current equity**: ~$20,535
+- **30 unit tests** covering decisions.py phase-transition logic — all passing
 
 ## Architecture
 ```
@@ -23,7 +24,7 @@ scripts/
   strategy_manager.py    — Safe parameter changes with snapshots + rollback
   journal.py             — Writes daily markdown journal
   slack_bot.py           — Slack commands (/positions, /sell, /summary, /status, /orders, /kill, /resume)
-  common.py              — Shared utilities (compatibility facade)
+  common.py              — Pure re-export facade (41 lines, all logic in infra/)
   reconcile.py           — Broker-vs-local state reconciliation
   healthcheck.py         — System health checks
   run.sh                 — Smart runner: auto-detects time, runs correct routine
@@ -36,7 +37,7 @@ scripts/
     regime.py            — Market regime analysis
     experiments.py       — A/B experiment tracking
   growth/
-    decisions.py         — Pure phase-transition decision logic (no broker calls)
+    decisions.py         — Pure phase-transition decision logic (no broker calls, 30 unit tests)
     broker_exec.py       — Broker execution helpers (cancel, replace, submit)
     recovery.py          — Metadata reconstruction and recovery helpers
   infra/
@@ -49,7 +50,9 @@ scripts/
     research.py, trade.py, manage.py, strategy.json, watchlist.json
     backtest_conservative/ (conservative.py, matrix.py, improvement.py, variants.py)
   tests/
-    test_analytics.py, test_recovery.py
+    test_decisions.py    — 30 tests: phase transitions, time stops, trail upgrades, edge cases
+    test_analytics.py    — Analytics pipeline tests
+    test_recovery.py     — Recovery and reconciliation tests
 config/
   strategy_growth.json   — Strategy parameters
   watchlist_growth.json  — 27 symbols
@@ -112,7 +115,7 @@ Communication: NFLX | Consumer: TSLA | Materials: FCX, NUE
 | After 16:00 | EOD (manage + perf + journal + analytics) | `./run.sh` or `orchestrator.py afternoon` |
 | Saturday 10AM | Weekly review | `orchestrator.py weekly` |
 
-**run.sh** auto-detects ET time and runs the correct routine. Currently running manually (no persistent orchestrator). Uses `ANTHROPIC_API_KEY="" python3 scripts/orchestrator.py ...` for direct mode.
+**run.sh** auto-detects ET time and runs the correct routine. Currently running manually (no persistent orchestrator). Uses `ANTHROPIC_API_KEY="" python3 scripts/orchestrator.py ...` for direct mode. No `bot` parameter needed — growth is the only bot.
 
 ## Key State Files
 | File | Location | Purpose |
@@ -173,6 +176,13 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - All positions currently in Technology sector (concentration risk flagged)
 - 40% slot utilization (2/5) — filters may be strict or market not offering setups
 
+## Backtesting Assessment
+Current backtests are **event-driven** (bar-by-bar), with **0.1% flat slippage** and **stop-limit fill logic**. Good for v1 but missing:
+- ❌ **Walk-forward / out-of-sample validation** — all variants tested on full period (overfitting risk)
+- ❌ **Volume-based fill feasibility** — no check if order qty is realistic vs bar volume
+- ✅ Commissions not modeled but Alpaca is commission-free (realistic)
+- ✅ Stale order expiry, regime/breadth filters, phase transitions all match live bot
+
 ## Phase 0 Hardening (Completed)
 - State isolation, job locks, broker reconciliation, structured JSONL logging
 - Health summary, recovery tests, manual-review escalation
@@ -184,11 +194,15 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - ✅ Trail upgrades at R milestones (4R/5R/6R/8R)
 - ✅ Enriched daily/weekly reports for AI learning
 - ✅ Broker stop-price sync on every manage run
+- ✅ Conservative bot archived, growth-only codebase
+- ✅ Unit tests for decisions.py (30 tests, all passing)
+- ✅ Performance stats fixed (largest loser no longer shows winners)
+- ⬜ Walk-forward backtest validation
 - ⬜ Relative volume + liquidity filters (config ready, partially wired)
 - ⬜ Volatility-targeted sizing (config ready)
 - ⬜ Setup-level performance attribution (full metadata per trade)
 - ⬜ Setup-specific ranking (separate scoring per setup type)
 
 ## Refactoring History
-- **May 12, 2026**: Archived conservative bot to `scripts/legacy/`. Growth bot is now the sole production path. Removed conservative branches from orchestrator, simplified CLI (no more `bot` parameter), updated config loaders to default to growth.
-
+- **May 12, 2026 (evening)**: Added 30 unit tests for growth/decisions.py. Fixed performance.py largest_loser bug. Fixed slack_bot.py /summary indentation. Pushed to git.
+- **May 12, 2026**: Archived conservative bot to `scripts/legacy/`. Growth bot is now the sole production path. Removed conservative branches from orchestrator, simplified CLI (no more `bot` parameter), updated config loaders to default to growth. Cleaned up healthcheck, reports, slack_bot conservative references.
