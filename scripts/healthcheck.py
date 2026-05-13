@@ -25,7 +25,6 @@ from common import (
     STATE_LOCKS,
     STATE_LOGS,
     STATE_GROWTH,
-    STATE_CONSERVATIVE,
     get_positions,
     get_account,
     log_event,
@@ -77,9 +76,9 @@ def check_heartbeat_freshness(max_stale_hours=4):
 
 
 def check_manual_review_flags():
-    """Count positions flagged for manual review across both bots."""
+    """Count positions flagged for manual review."""
     flags = []
-    for bot in ("growth", "conservative"):
+    for bot in ("growth",):
         tracking_path = resolve_state(bot, "position_tracking.json")
         if not tracking_path.exists():
             continue
@@ -98,14 +97,14 @@ def check_manual_review_flags():
 
 
 def check_unmanaged_positions():
-    """Find broker positions not tracked by either bot."""
+    """Find broker positions not tracked by the bot."""
     try:
         positions = get_positions()
     except Exception:
         return []
 
     tracked_symbols = set()
-    for bot in ("growth", "conservative"):
+    for bot in ("growth",):
         tracking_path = resolve_state(bot, "position_tracking.json")
         if tracking_path.exists():
             try:
@@ -131,7 +130,6 @@ def check_stale_files():
     today = today_str()
     critical_files = [
         ("growth", "candidates.json"),
-        ("conservative", "candidates.json"),
     ]
     for bot, name in critical_files:
         path = resolve_state(bot, name)

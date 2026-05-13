@@ -2,11 +2,11 @@
 
 ## Last Updated: May 12, 2026
 
-## Current Status: Paper-Trading Active (Week 2) — Growth Bot Primary
+## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only
 
 ## Quick Summary
 - **Paper trading with Alpaca** since May 4, 2026 ($20K starting capital)
-- **Growth bot is primary** — conservative bot kept for reference only
+- **Growth bot is the sole production bot** — conservative bot archived to `scripts/legacy/`
 - **3 trades entered**, 1 closed (MU: +$323.36, +2.79R trailing stop exit)
 - **2 positions open**: AMD (continuation, initial phase), SMH (breakout, trailing phase)
 - **Current equity**: ~$20,500
@@ -15,12 +15,9 @@
 ```
 scripts/
   orchestrator.py        — Claude-powered autonomous agent (scheduler + AI decision loop)
-  research.py            — Conservative: scans 62 symbols (9:35 AM ET)
-  research_growth.py     — Growth: scans 27 momentum symbols
-  trade.py               — Conservative: OTO stop-limit buy orders
-  trade_growth.py        — Growth: stop-limit buy orders with correlation cap
-  manage.py              — Conservative: 3-phase exit management
-  manage_growth.py       — Growth: 3-phase exit (initial→protected→trailing) + time stop
+  research_growth.py     — Scans 27 momentum symbols
+  trade_growth.py        — Stop-limit buy orders with correlation cap
+  manage_growth.py       — 3-phase exit (initial→protected→trailing) + time stop
   performance.py         — Tracks closed trades, equity curve, stats
   learning.py            — Analyzes performance, proposes strategy tuning
   strategy_manager.py    — Safe parameter changes with snapshots + rollback
@@ -29,7 +26,6 @@ scripts/
   common.py              — Shared utilities (compatibility facade)
   reconcile.py           — Broker-vs-local state reconciliation
   healthcheck.py         — System health checks
-  backup.sh              — Local + S3 backup script
   run.sh                 — Smart runner: auto-detects time, runs correct routine
   analytics/
     pipeline.py          — Daily analytics orchestrator
@@ -47,19 +43,20 @@ scripts/
     paths.py, jsonio.py, logging_utils.py, locks.py, dedupe.py,
     broker.py, env.py, time_utils.py, sizing.py, config.py, alerts.py
   backtest/
-    growth.py, conservative.py, matrix.py, variants.py, improvement.py
+    growth.py            — Growth bot backtester
+    print_results.py     — Backtest results formatter
+  legacy/                — Archived conservative bot + old backtests
+    research.py, trade.py, manage.py, strategy.json, watchlist.json
+    backtest_conservative/ (conservative.py, matrix.py, improvement.py, variants.py)
   tests/
     test_analytics.py, test_recovery.py
 config/
-  strategy.json          — Conservative bot parameters
-  strategy_growth.json   — Growth bot parameters
-  watchlist.json         — 62 symbols (conservative)
-  watchlist_growth.json  — 27 symbols (growth)
+  strategy_growth.json   — Strategy parameters
+  watchlist_growth.json  — 27 symbols
   guardrails.json        — Safety bounds for auto-tuning
 state/
-  conservative/          — Conservative bot state files
-  growth/                — Growth bot state files (candidates, tracking, orders, manage_log)
-  shared/                — Shared: equity_curve, performance, ai_review, daily/weekly reports
+  growth/                — Position tracking, candidates, orders, manage log
+  shared/                — Equity curve, performance, AI review, daily/weekly reports
   locks/                 — Job lock files
   logs/                  — Structured JSONL daily logs
   trade_history.json     — All closed trades (format: {"trades": [...]})
@@ -107,20 +104,13 @@ ETFs: SPY, QQQ, IWM, SMH
 Tech: NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP
 Communication: NFLX | Consumer: TSLA | Materials: FCX, NUE
 
-## Conservative Bot (Reference Only)
-- 62 symbols, 14 ETFs + 48 stocks, 8 sectors
-- Regime: SPY+QQQ above 50+200 SMA, breadth via RSP proxy
-- Entry: Confirmation candle after 2-12 day pullback
-- Exit: Initial → Breakeven (1R) → Trailing (2R, 3.0×ATR)
-- Risk: 0.5%/trade, 5 positions, 25% cash reserve
-
 ## Daily Operations
 | Time (ET) | Routine | Command |
 |-----------|---------|---------|
-| 9:30-11:00 | Morning (research + trade) | `./run.sh` or `orchestrator.py morning growth` |
+| 9:30-11:00 | Morning (research + trade) | `./run.sh` or `orchestrator.py morning` |
 | 11:00-16:00 | Midday manage | `./run.sh` or `manage_growth.py` |
-| After 16:00 | EOD (manage + perf + journal + analytics) | `./run.sh` or `orchestrator.py afternoon growth` |
-| Saturday 10AM | Weekly review | `orchestrator.py weekly growth` |
+| After 16:00 | EOD (manage + perf + journal + analytics) | `./run.sh` or `orchestrator.py afternoon` |
+| Saturday 10AM | Weekly review | `orchestrator.py weekly` |
 
 **run.sh** auto-detects ET time and runs the correct routine. Currently running manually (no persistent orchestrator). Uses `ANTHROPIC_API_KEY="" python3 scripts/orchestrator.py ...` for direct mode.
 
@@ -199,12 +189,6 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - ⬜ Setup-level performance attribution (full metadata per trade)
 - ⬜ Setup-specific ranking (separate scoring per setup type)
 
-## Backtest Results (Conservative, Jan 2024 – May 2026)
-| Metric | Value |
-|--------|-------|
-| Total Return | +30.66% |
-| Trades | 85 |
-| Win Rate | 52.9% |
-| Profit Factor | 2.00 |
-| Max Drawdown | -6.70% |
+## Refactoring History
+- **May 12, 2026**: Archived conservative bot to `scripts/legacy/`. Growth bot is now the sole production path. Removed conservative branches from orchestrator, simplified CLI (no more `bot` parameter), updated config loaders to default to growth.
 

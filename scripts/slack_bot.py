@@ -108,8 +108,8 @@ def _record_manual_sell(symbol, qty, avg_entry, exit_price, pnl, order_id, clien
     now = now_iso()
     date_str = datetime.now(MARKET_TZ).strftime("%Y-%m-%d")
 
-    # Update position tracking (try both growth and conservative)
-    for tracking_file in ["position_tracking_growth.json", "position_tracking.json"]:
+    # Update position tracking
+    for tracking_file in ["position_tracking_growth.json"]:
         tracking_path = STATE_DIR / tracking_file
         if not tracking_path.exists():
             continue

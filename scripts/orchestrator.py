@@ -417,34 +417,9 @@ def check_drawdown_circuit_breaker():
 
 def handle_tool_call(tool_name, tool_input):
     """Execute a tool call and return the result."""
-    if tool_name == "run_research":
-        return run_script("research")
-    elif tool_name == "run_trade":
-        # Check circuit breaker before trading
-        tripped, dd = check_drawdown_circuit_breaker()
-        if tripped:
-            return {"success": False, "error": f"Circuit breaker tripped: {dd:.1f}% drawdown. No new trades."}
-        # Hard time-window guard: block order placement outside valid hours
-        if not is_within_trade_window():
-            now = datetime.now()
-            msg = (f"Order placement blocked: current time {now.strftime('%H:%M')} is outside "
-                   f"the valid trade window ({MORNING_TRADE_WINDOW[0]}:{MORNING_TRADE_WINDOW[1]:02d}-"
-                   f"{MORNING_TRADE_WINDOW[2]}:{MORNING_TRADE_WINDOW[3]:02d}). "
-                   f"Research can run late, but orders are time-restricted.")
-            log_event("trade_window_blocked", {"time": now.strftime("%H:%M")})
-            return {"success": False, "error": msg}
-        return run_script("trade")
-    elif tool_name == "run_manage":
-        return run_script("manage")
-    elif tool_name == "run_journal":
-        return run_script("journal")
-    elif tool_name == "run_performance":
-        return run_script("performance")
-    elif tool_name == "run_learning":
-        return run_script("learning")
-    elif tool_name == "run_research_growth":
+    if tool_name in ("run_research", "run_research_growth"):
         return run_script("research_growth")
-    elif tool_name == "run_trade_growth":
+    elif tool_name in ("run_trade", "run_trade_growth"):
         # Check circuit breaker before trading
         tripped, dd = check_drawdown_circuit_breaker()
         if tripped:
@@ -459,8 +434,14 @@ def handle_tool_call(tool_name, tool_input):
             log_event("trade_window_blocked", {"time": now.strftime("%H:%M")})
             return {"success": False, "error": msg}
         return run_script("trade_growth")
-    elif tool_name == "run_manage_growth":
+    elif tool_name in ("run_manage", "run_manage_growth"):
         return run_script("manage_growth")
+    elif tool_name == "run_journal":
+        return run_script("journal")
+    elif tool_name == "run_performance":
+        return run_script("performance")
+    elif tool_name == "run_learning":
+        return run_script("learning")
     elif tool_name == "read_state":
         return read_state_file(tool_input.get("filename", ""))
     elif tool_name == "apply_strategy_change":
@@ -492,11 +473,11 @@ def handle_tool_call(tool_name, tool_input):
         return {"error": f"Unknown tool: {tool_name}"}
 
 
-def run_agent_loop(task_description, system_prompt, allowed_tools=None, bot="all"):
+def run_agent_loop(task_description, system_prompt, allowed_tools=None):
     """Run Claude in an agentic tool-use loop until it's done. Returns structured result."""
     if not ANTHROPIC_API_KEY:
         print("⚠️  ANTHROPIC_API_KEY not set — running scripts directly without AI orchestration")
-        return run_direct_mode(task_description, bot=bot)
+        return run_direct_mode(task_description)
 
     # Filter tools if whitelist provided
     tools = TOOLS if allowed_tools is None else [t for t in TOOLS if t["name"] in allowed_tools]
@@ -507,7 +488,7 @@ def run_agent_loop(task_description, system_prompt, allowed_tools=None, bot="all
         print(f"⚠️  API budget exceeded (${spent:.2f} / ${limit:.2f} this month) — falling back to direct mode")
         send_alert(f"⚠️ API budget exceeded (${spent:.2f}/${limit:.2f}). Running in direct mode.", level="warning")
         log_event("budget_exceeded", {"spent": spent, "limit": limit})
-        result = run_direct_mode(task_description, bot=bot)
+        result = run_direct_mode(task_description)
         if isinstance(result, dict):
             result["budget_fallback"] = True
         else:
@@ -597,74 +578,42 @@ def run_agent_loop(task_description, system_prompt, allowed_tools=None, bot="all
     }
 
 
-def run_direct_mode(task, bot="all"):
-    """Fallback: run scripts directly without Claude (when no API key).
-    bot: 'all', 'conservative', or 'growth'
-    """
-    print(f"  Direct mode: {task} [bot={bot}]")
+def run_direct_mode(task, bot="growth"):
+    """Fallback: run scripts directly without Claude (when no API key)."""
+    print(f"  Direct mode: {task}")
     if "morning" in task.lower() or "research" in task.lower():
-        r1, r2, rg1, rg2 = None, None, None, None
+        rg1 = run_script("research_growth")
+        print(f"  Research: {rg1.get('output', rg1.get('error', ''))[:200]}")
 
-        # Conservative bot
-        if bot in ("all", "conservative"):
-            r1 = run_script("research")
-            print(f"  Research: {r1.get('output', r1.get('error', ''))[:200]}")
-
-            if r1.get("success"):
-                if is_within_trade_window():
-                    r2 = run_script("trade")
-                    print(f"  Trade: {r2.get('output', r2.get('error', ''))[:200]}")
-                else:
-                    r2 = {"success": False, "output": "Skipped — outside trade window", "error": "Outside valid trade window"}
-                    print("  Trade: SKIPPED (outside trade window)")
-                    log_event("trade_window_blocked", {"mode": "direct", "time": datetime.now().strftime("%H:%M")})
-                    send_alert("⚠️ Morning trade skipped in direct mode: outside trade window", level="warning")
+        rg2 = None
+        if rg1.get("success"):
+            if is_within_trade_window():
+                rg2 = run_script("trade_growth")
+                print(f"  Trade: {rg2.get('output', rg2.get('error', ''))[:200]}")
             else:
-                r2 = {"success": False, "output": "Skipped — research failed"}
-                print("  Trade: SKIPPED (research failed)")
-                send_alert(f"⚠️ Morning research failed, trade skipped: {r1.get('error', r1.get('errors', ''))[:300]}", level="warning")
-
-        # Growth bot
-        if bot in ("all", "growth"):
-            rg1 = run_script("research_growth")
-            print(f"  Growth Research: {rg1.get('output', rg1.get('error', ''))[:200]}")
-
-            if rg1.get("success"):
-                if is_within_trade_window():
-                    rg2 = run_script("trade_growth")
-                    print(f"  Growth Trade: {rg2.get('output', rg2.get('error', ''))[:200]}")
-                else:
-                    rg2 = {"success": False, "output": "Skipped — outside trade window"}
-                    print("  Growth Trade: SKIPPED (outside trade window)")
-            else:
-                rg2 = {"success": False, "output": "Skipped — growth research failed"}
-                print("  Growth Trade: SKIPPED (growth research failed)")
+                rg2 = {"success": False, "output": "Skipped — outside trade window"}
+                print("  Trade: SKIPPED (outside trade window)")
+                log_event("trade_window_blocked", {"mode": "direct", "time": datetime.now().strftime("%H:%M")})
+                send_alert("⚠️ Morning trade skipped in direct mode: outside trade window", level="warning")
+        else:
+            rg2 = {"success": False, "output": "Skipped — research failed"}
+            print("  Trade: SKIPPED (research failed)")
+            send_alert(f"⚠️ Morning research failed, trade skipped: {rg1.get('error', rg1.get('errors', ''))[:300]}", level="warning")
 
         # Alert
-        results = {}
-        if r1: results["research"] = r1
-        if r2: results["trade"] = r2
-        if rg1: results["research_growth"] = rg1
-        if rg2: results["trade_growth"] = rg2
-
-        n_cands_g = 0
+        n_cands = 0
         regime = "?"
-        candidates_growth = read_state_file("candidates_growth.json")
-        if isinstance(candidates_growth, dict):
-            n_cands_g = len(candidates_growth.get("candidates", []))
-            regime = candidates_growth.get("regime_mode", "?")
+        candidates = read_state_file("candidates_growth.json")
+        if isinstance(candidates, dict):
+            n_cands = len(candidates.get("candidates", []))
+            regime = candidates.get("regime_mode", "?")
 
-        msg_parts = [f"🌅 Morning scan complete [{bot}]", f"Regime: {regime}"]
-        if bot in ("all", "conservative") and r1:
-            candidates = read_state_file("candidates.json")
-            n_cands = len(candidates.get("candidates", [])) if isinstance(candidates, dict) else 0
-            msg_parts.append(f"Conservative: {n_cands} candidates")
-        if bot in ("all", "growth"):
-            msg_parts.append(f"Growth: {n_cands_g} candidates")
-
+        msg_parts = [f"🌅 Morning scan complete", f"Regime: {regime}", f"Candidates: {n_cands}"]
         send_alert("\n".join(msg_parts), level="info")
 
-        all_results = [v for v in [r1, r2, rg1, rg2] if v is not None]
+        results = {"research": rg1}
+        if rg2: results["trade"] = rg2
+        all_results = [v for v in [rg1, rg2] if v is not None]
         all_ok = all(r.get("success") for r in all_results)
         any_ok = any(r.get("success") for r in all_results)
         results["status"] = "success" if all_ok else ("partial" if any_ok else "failed")
@@ -673,21 +622,12 @@ def run_direct_mode(task, bot="all"):
     elif "afternoon" in task.lower() or "manage" in task.lower():
         results = {}
 
-        # Conservative manage
-        if bot in ("all", "conservative"):
-            r1 = run_script("manage")
-            print(f"  Manage: {r1.get('output', r1.get('error', ''))[:200]}")
-            results["manage"] = r1
-            if not r1.get("success"):
-                send_alert(f"⚠️ Manage failed: {r1.get('error', r1.get('errors', ''))[:300]}", level="warning")
-
-        # Growth manage
-        if bot in ("all", "growth"):
-            rg1 = run_script("manage_growth")
-            print(f"  Growth Manage: {rg1.get('output', rg1.get('error', ''))[:200]}")
-            results["manage_growth"] = rg1
-            if not rg1.get("success"):
-                send_alert(f"⚠️ Growth manage failed: {rg1.get('error', rg1.get('errors', ''))[:300]}", level="warning")
+        # Manage positions
+        rg1 = run_script("manage_growth")
+        print(f"  Manage: {rg1.get('output', rg1.get('error', ''))[:200]}")
+        results["manage"] = rg1
+        if not rg1.get("success"):
+            send_alert(f"⚠️ Manage failed: {rg1.get('error', rg1.get('errors', ''))[:300]}", level="warning")
 
         r2 = run_script("performance")
         print(f"  Performance: {r2.get('output', r2.get('error', ''))[:200]}")
@@ -709,7 +649,7 @@ def run_direct_mode(task, bot="all"):
         except Exception as e:
             print(f"  Analytics: failed ({e})")
 
-        send_alert(f"🌆 Afternoon management complete [{bot}]", level="info")
+        send_alert("🌆 Afternoon management complete", level="info")
 
         all_results = [v for v in results.values() if isinstance(v, dict)]
         all_ok = all(r.get("success") for r in all_results)
@@ -763,14 +703,12 @@ RULES:
 - Be concise in notifications — include key numbers only."""
 
 
-def morning_run(allow_trade=True, bot="all"):
-    """Execute morning workflow.
-    bot: 'all' (both), 'conservative', or 'growth'
-    """
+def morning_run(allow_trade=True):
+    """Execute morning workflow."""
     print(f"\n{'='*50}")
-    print(f"  MORNING RUN - {datetime.now().strftime('%Y-%m-%d %H:%M')} [{bot}]")
+    print(f"  MORNING RUN - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"{'='*50}")
-    log_event("run_start", {"type": "morning", "allow_trade": allow_trade, "bot": bot})
+    log_event("run_start", {"type": "morning", "allow_trade": allow_trade})
 
     task = (
         "Execute the morning trading workflow: scan for candidates, review results, place orders if appropriate, and send a summary alert."
@@ -780,12 +718,11 @@ def morning_run(allow_trade=True, bot="all"):
 
     try:
         if allow_trade:
-            result = run_agent_loop(task, SYSTEM_PROMPT, bot=bot)
+            result = run_agent_loop(task, SYSTEM_PROMPT)
         else:
             result = run_agent_loop(
                 task, SYSTEM_PROMPT,
                 allowed_tools={"run_research", "read_state", "send_notification"},
-                bot=bot,
             )
         status = result.get("status", "failed") if isinstance(result, dict) else "failed"
         if status != "success":
@@ -800,7 +737,7 @@ def morning_run(allow_trade=True, bot="all"):
     # Post-action reconciliation after morning trade
     recon = None
     if allow_trade and status != "failed":
-        recon = reconcile_after_action("morning_trade", bot=bot)
+        recon = reconcile_after_action("morning_trade")
         if isinstance(recon, dict):
             if recon.get("match") is False and status == "success":
                 status = "partial"
@@ -814,20 +751,17 @@ def morning_run(allow_trade=True, bot="all"):
     record_run("morning", status=status)
 
 
-def afternoon_run(bot="all"):
-    """Execute afternoon workflow.
-    bot: 'all' (both), 'conservative', or 'growth'
-    """
+def afternoon_run():
+    """Execute afternoon workflow."""
     print(f"\n{'='*50}")
-    print(f"  AFTERNOON RUN - {datetime.now().strftime('%Y-%m-%d %H:%M')} [{bot}]")
+    print(f"  AFTERNOON RUN - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"{'='*50}")
-    log_event("run_start", {"type": "afternoon", "bot": bot})
+    log_event("run_start", {"type": "afternoon"})
 
     try:
         result = run_agent_loop(
             "Execute the afternoon workflow: manage open positions, update performance metrics, write the journal, and send a summary alert with any position changes.",
             SYSTEM_PROMPT,
-            bot=bot,
         )
         status = result.get("status", "failed") if isinstance(result, dict) else "failed"
         if status != "success":
@@ -842,7 +776,7 @@ def afternoon_run(bot="all"):
     # Post-action reconciliation after position management
     recon = None
     if status != "failed":
-        recon = reconcile_after_action("afternoon_manage", bot=bot)
+        recon = reconcile_after_action("afternoon_manage")
         if isinstance(recon, dict):
             if recon.get("match") is False and status == "success":
                 status = "partial"
@@ -993,7 +927,7 @@ def startup_self_check():
         log_event("startup_check", {"status": "ok"})
 
 
-def reconcile_after_action(action_name, bot="all"):
+def reconcile_after_action(action_name):
     """Post-action reconciliation: 3-way compare of local tracking vs broker positions vs broker open orders."""
     try:
         from common import alpaca_get
@@ -1006,11 +940,8 @@ def reconcile_after_action(action_name, bot="all"):
         broker_open_buy_symbols = {o["symbol"] for o in broker_orders if o.get("side") == "buy"}
         broker_open_sell_symbols = {o["symbol"] for o in broker_orders if o.get("side") == "sell"}
 
-        # Load local tracking - use bot-specific file if running growth bot
-        if bot == "growth":
-            tracking_path = STATE_DIR / "position_tracking_growth.json"
-        else:
-            tracking_path = STATE_DIR / "position_tracking.json"
+        # Load local tracking
+        tracking_path = STATE_DIR / "position_tracking_growth.json"
         if not tracking_path.exists():
             # No tracking file but broker has positions — flag it
             if broker_position_symbols:
@@ -1197,25 +1128,24 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
-        bot = sys.argv[2] if len(sys.argv) > 2 else "all"  # "all", "conservative", "growth"
 
         if cmd == "morning":
-            morning_run(bot=bot)
+            morning_run()
         elif cmd == "afternoon":
-            afternoon_run(bot=bot)
+            afternoon_run()
         elif cmd == "weekly":
             weekly_review()
         elif cmd == "test":
             print("Running test cycle...")
-            morning_run(bot=bot)
-            afternoon_run(bot=bot)
+            morning_run()
+            afternoon_run()
         else:
-            print(f"Usage: {sys.argv[0]} [morning|afternoon|weekly|test] [all|conservative|growth]")
+            print(f"Usage: {sys.argv[0]} [morning|afternoon|weekly|test]")
             print("  No argument = run as persistent scheduled bot")
             print("  Examples:")
-            print("    python orchestrator.py morning growth      # Growth bot only")
-            print("    python orchestrator.py morning conservative # Conservative bot only")
-            print("    python orchestrator.py morning              # Both bots (default)")
+            print("    python orchestrator.py morning    # Morning research + trade")
+            print("    python orchestrator.py afternoon  # EOD manage + performance + journal")
+            print("    python orchestrator.py weekly     # Weekly review")
     else:
         main()
 

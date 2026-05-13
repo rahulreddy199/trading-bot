@@ -1,25 +1,12 @@
 # AI Swing Trading Bot
 
-An autonomous, Claude-powered swing trading system with **two strategies**: a conservative pullback bot and an aggressive growth/momentum bot. Both scan for setups, place orders via Alpaca, manage positions with phased exits, and learn from performance over time.
+An autonomous, Claude-powered momentum swing trading system. Scans for breakout/continuation setups, places orders via Alpaca, manages positions with phased exits, and learns from performance over time.
 
-## Two Bots, One System
-
-| | **Conservative Bot** | **Growth Bot** |
-|---|---|---|
-| **Style** | Trend pullback + confirmation | Momentum breakout + continuation |
-| **Universe** | 62 symbols across 8 sectors | 27 high-beta growth names |
-| **Risk/trade** | 0.5% equity | 0.75% equity |
-| **Max positions** | 5 | 5 |
-| **Entry** | Pullback to 20 SMA + confirmation candle | Breakout near 20/55-day highs |
-| **Setups** | Hammer, engulfing, morning star | Breakout, shallow pullback, continuation |
-| **Exit phases** | Initial → breakeven (1R) → trail (2R) | Initial → protected (1.5R) → trail (2.5R) |
-| **Trailing stop** | 3.0 × ATR | 3.0 × ATR (tightens at milestones) |
-| **Time stop** | None | 10 bars without profit → exit |
-| **Cash reserve** | 25% (full risk) | 5% (full risk) |
+> **Note:** A conservative pullback bot was previously part of this system. It has been moved to `scripts/legacy/` for reference. The growth/momentum bot is the sole production path.
 
 ---
 
-## Growth Bot — Strategy Detail
+## Strategy
 
 The growth bot targets high-momentum names making new highs or pulling back shallowly in strong uptrends.
 
@@ -134,59 +121,11 @@ Every fill records planned trigger, planned limit, actual fill price, and slippa
 
 ---
 
-## Conservative Bot — Strategy Detail
-
-The conservative bot trades confirmed pullbacks in broad uptrends with strict confirmation requirements.
-
-### Strategy Summary
-
-| Parameter | Value |
-|-----------|-------|
-| **Universe** | 62 symbols — 14 ETFs + 48 stocks across 8 sectors |
-| **Regime filter** | SPY & QQQ both above 50-day AND 200-day SMA |
-| **Breadth filter** | RSP above 50-day SMA (mapped to 0-100 score) |
-| **VIX filter** | VIX > 30 → forced reduced risk mode |
-| **Trend filter** | Price > 50 SMA > 200 SMA |
-| **Entry trigger** | Pullback (2-12 days), confirmation candle, stop-limit above candle high |
-| **Ranking** | Relative strength vs SPY over 126 days — top 20% only |
-| **Stop-loss** | Wider of (candle low − 0.1×ATR) or (entry − 2×ATR) |
-| **Exit phases** | Initial → breakeven at 1R → trailing at 2R (3.0×ATR trail) |
-| **Earnings** | No entries within 7 days of earnings |
-
-### Risk Management (Conservative)
-
-| Parameter | Full Risk | Reduced Risk |
-|-----------|-----------|--------------|
-| Risk per trade | 0.5% | 0.5% |
-| Max positions | 5 | 4 |
-| Max portfolio risk | 3% | 3% |
-| Cash reserve | 25% | 40% |
-| Max ATR % | 6% | 6% |
-
-**Sector limits**: Technology 55%, Financials/Healthcare/Industrials 35%, Consumer/Communication 30%, Energy 25%, Materials 20%.
-
-### Conservative Watchlist (62 Symbols)
-
-| Sector | Symbols |
-|--------|---------|
-| **Broad Market ETFs** | SPY, QQQ, IWM, MDY |
-| **Sector ETFs** | XLK, SMH, XLI, XLF, XLV, XLE, XLC, XLY, XLB, XLP |
-| **Technology** | AAPL, MSFT, GOOGL, NVDA, AMZN, META, AVGO, AMD, ANET, CRM, NOW, ORCL, PANW, ADBE, SNPS, KLAC |
-| **Healthcare** | LLY, UNH, ISRG, ABT, TMO |
-| **Financial Services** | JPM, V, MA, GS, AXP, BLK |
-| **Consumer** | HD, COST, TJX, NKE, SBUX |
-| **Industrials** | CAT, GE, URI, ETN, DE, PWR, WM |
-| **Communication** | NFLX, SPOT, DIS, TMUS |
-| **Energy** | XOM, CVX, SLB |
-| **Materials** | FCX, NUE |
-
----
-
 ## How The Bot Works
 
-### State Isolation
+### State Layout
 
-Each bot has its own namespaced state directory (`state/conservative/`, `state/growth/`) to prevent cross-bot file collisions. Shared data like equity curves, performance stats, and AI review history lives in `state/shared/`. A `state_path(bot, name)` helper ensures consistent path resolution.
+State files live in `state/growth/` for position tracking and candidates, `state/shared/` for equity curves, performance, and reports. A `state_path(bot, name)` helper ensures consistent path resolution.
 
 ### Daily Cycle (Fully Autonomous)
 
@@ -194,34 +133,26 @@ Each bot has its own namespaced state directory (`state/conservative/`, `state/g
 |-----------|-------------|
 | **8:00 AM** | 💓 Heartbeat alert — confirms bot is alive |
 | **9:35 AM** | 🌅 **Morning run**: scan watchlist → filter candidates → place stop-limit orders |
-| **10:30 AM** | 📈 **Growth manage run**: intraday phase checks (idempotent) |
-| **1:00 PM** | 📈 **Growth manage run**: intraday phase checks (idempotent) |
-| **4:05 PM** | 🌆 **Afternoon run**: full manage (both bots) → performance → journal |
+| **10:30 AM** | 📈 **Manage run**: intraday phase checks (idempotent) |
+| **1:00 PM** | 📈 **Manage run**: intraday phase checks (idempotent) |
+| **4:05 PM** | 🌆 **Afternoon run**: manage → performance → journal → analytics |
 | **5:00 PM** | 💾 **Daily backup**: local + S3 (if configured) |
 | **Saturday 10 AM** | 📊 **Weekly review**: analyze performance → propose parameter tweaks |
 
-### Running a Specific Bot
+### Running the Bot
 
 ```bash
-# Growth bot only
-python scripts/orchestrator.py morning growth
-python scripts/orchestrator.py afternoon growth
+# Easiest: smart runner auto-detects ET time
+./run.sh
 
-# Conservative bot only
-python scripts/orchestrator.py morning conservative
-python scripts/orchestrator.py afternoon conservative
-
-# Both bots (default)
+# Or run specific routines directly
 python scripts/orchestrator.py morning
 python scripts/orchestrator.py afternoon
+python scripts/orchestrator.py weekly
 ```
 
 ### Three-Phase Exit System
 
-**Conservative:**
-1. Initial stop → Breakeven at 1R → Trailing at 2R (3.0×ATR)
-
-**Growth:**
 1. Initial stop → Protected at 1.5R → Trailing at 2.5R (3.0×ATR) + time stop at 10 bars
 
 ### Self-Learning System
@@ -234,68 +165,54 @@ python scripts/orchestrator.py afternoon
 
 ```
 config/
-  strategy.json            # Conservative bot parameters
-  strategy_growth.json     # Growth bot parameters
-  watchlist.json           # Conservative watchlist (62 symbols)
-  watchlist_growth.json    # Growth watchlist (27 symbols)
+  strategy_growth.json     # Strategy parameters
+  watchlist_growth.json    # Watchlist (27 symbols)
   guardrails.json          # Safety bounds for auto-tuning
 scripts/
   orchestrator.py          # Claude-powered autonomous agent (the brain)
-  research.py              # Conservative: market scan + candidate selection
-  research_growth.py       # Growth: momentum scan + candidate selection
-  trade.py                 # Conservative: order placement
-  trade_growth.py          # Growth: order placement
-  manage.py                # Conservative: position management
-  manage_growth.py         # Growth: position management
+  research_growth.py       # Market scan + candidate selection
+  trade_growth.py          # Order placement
+  manage_growth.py         # Position management (3-phase exit)
   learning.py              # Performance analysis + tuning proposals
   strategy_manager.py      # Safe parameter changes with snapshots
   journal.py               # Daily journal writer
   performance.py           # Performance metrics calculator
   slack_bot.py             # Slack command interface (/positions, /sell, /summary)
-  common.py                # Shared utilities (API, sizing, alerts) + compatibility facade
+  common.py                # Shared utilities + compatibility facade
   reconcile.py             # Broker-vs-local state reconciliation
   healthcheck.py           # System health checks
-  backup.sh                # Local + S3 backup script
+  run.sh                   # Smart runner: auto-detects ET time, runs correct routine
   analytics/               # Analytics pipeline
     pipeline.py            # Daily analytics orchestrator
     metrics.py             # Performance metrics computation
     attribution.py         # Setup-level and grouped attribution
     ai_review.py           # AI review recommendations (daily + cumulative history)
-    reports.py             # Daily report generation
+    reports.py             # Daily and weekly report generation (enriched for AI learning)
     regime.py              # Market regime analysis
     experiments.py         # A/B experiment tracking
-  growth/                  # Growth bot modules (refactored)
+  growth/                  # Core growth bot modules
     decisions.py           # Pure phase-transition decision logic (no broker calls)
     broker_exec.py         # Broker execution helpers (cancel, replace, submit)
     recovery.py            # Metadata reconstruction and recovery helpers
-  infra/                   # Infrastructure modules (refactored from common.py)
-    paths.py               # Path resolution helpers
-    jsonio.py              # JSON file I/O
-    logging_utils.py       # Structured JSONL logging
-    locks.py               # Job locks and deduplication
-    dedupe.py              # Order deduplication
-    broker.py              # Alpaca API helpers
-    env.py                 # Environment and config loading
-    time_utils.py          # Timezone and market-time helpers
-    sizing.py              # Position sizing helpers
-    config.py              # Config loading
-    alerts.py              # Slack/webhook alert helpers
+  infra/                   # Infrastructure modules
+    paths.py, jsonio.py, logging_utils.py, locks.py, dedupe.py,
+    broker.py, env.py, time_utils.py, sizing.py, config.py, alerts.py
   backtest/                # Backtesting modules
     growth.py              # Growth bot backtester
-    conservative.py        # Conservative bot backtester
-    matrix.py              # Multi-variant backtest runner
+    print_results.py       # Backtest results formatter
+  legacy/                  # Archived code (conservative bot)
+    research.py, trade.py, manage.py, strategy.json, watchlist.json
+    backtest_conservative/
   tests/                   # Test suite
     test_analytics.py      # Analytics pipeline tests
     test_recovery.py       # Recovery and reconciliation tests
-state/                     # Runtime state (auto-populated)
-  conservative/            # Conservative bot state files
-  growth/                  # Growth bot state files
-  shared/                  # Shared analytics, equity curve, AI review history
+state/                     # Runtime state (gitignored except reports)
+  growth/                  # Position tracking, candidates, orders, manage log
+  shared/                  # Equity curve, AI review history, daily/weekly reports
   locks/                   # Job lock files
   logs/                    # Structured JSONL daily logs
-journal/                   # Daily journals (auto-populated)
+journal/                   # Daily journals (pushed to git)
 prompts/                   # Prompt templates
-growthBot/                 # Growth bot design docs
 docs/                      # Architecture and hardening docs
 ```
 
@@ -332,14 +249,18 @@ ALLOW_LIVE_TRADING=false
 ### 3. Run the bot
 
 ```bash
-# Persistent autonomous bot (recommended)
+# Easiest: smart runner auto-detects ET time and runs the correct routine
+./run.sh
+
+# Or run specific routines
+python scripts/orchestrator.py morning     # Research + trade
+python scripts/orchestrator.py afternoon   # Manage + performance + journal
+python scripts/orchestrator.py weekly      # Weekly review
+
+# Persistent autonomous bot (runs on schedule)
 python scripts/orchestrator.py
 
-# Single bot run
-python scripts/orchestrator.py morning growth
-python scripts/orchestrator.py afternoon growth
-
-# Run scripts manually
+# Run individual scripts
 python scripts/research_growth.py
 python scripts/trade_growth.py
 python scripts/manage_growth.py
@@ -384,18 +305,53 @@ EOF
 sudo systemctl enable trading-bot && sudo systemctl start trading-bot
 ```
 
-## Backtest Results
+## Enriched Reports (for AI Learning)
 
-### Conservative Bot (Jan 2024 – May 2026)
+Both daily and weekly reports are designed as structured inputs for AI analysis and cumulative learning.
 
-| Metric | Value |
-|--------|-------|
-| Total Return | +30.66% |
-| Total Trades | 85 |
-| Win Rate | 52.9% |
-| Profit Factor | 2.00 |
-| Avg R-Multiple | 0.56R |
-| Max Drawdown | -6.70% |
+### Daily Report Sections
+- **Headline metrics**: win rate, avg R, profit factor, equity
+- **Account snapshot**: cash, equity, buying power, open P&L
+- **Market regime**: SPY & QQQ status vs 50/200 SMA, regime classification
+- **Market context**: SPY & QQQ daily % change
+- **Open positions table**: entry, current price, P&L, R-multiple, phase, stop price
+- **Position price context**: stop distance %, drawdown from best price
+- **Management actions**: phase transitions, stop replacements, trail upgrades
+- **Research summary**: candidates scanned, passed, rejected — with top rejection reasons
+- **Near-miss candidates**: symbols that failed only 1 filter (close to qualifying)
+- **Orders placed/skipped**: with reasoning
+- **Trades closed today**: entry/exit/P&L/R/exit type
+- **Best/worst contributors**: top P&L and losing positions
+- **Correlation & sector concentration**: warnings if concentrated
+- **Trading activity summary**: slot utilization, capital deployed %, regime
+- **Equity snapshot**: current equity with daily/weekly/monthly change
+- **AI recommendations**: from the analytics pipeline
+- **Operational issues**: errors or anomalies
+
+### Weekly Report Sections
+- **Performance summary**: 7-day, 30-day, and all-time metrics
+- **Equity curve table**: daily equity values for the week
+- **Full trade history table**: all closed trades with setup, entry, exit, P&L, R, exit type
+- **Open positions**: current state of all holdings
+- **Attribution**: by setup type, market regime, and sector
+- **Daily summaries**: recap of each day's activity
+- **AI review trends**: recurring themes from cumulative AI reviews
+- **Strategy observations**: pass rate, top rejection reasons, slot utilization, concentration warnings
+- **Experiments**: A/B test status and results
+- **What to watch next week**: upcoming catalysts and areas to monitor
+
+Reports are saved to `state/shared/` and pushed to git for version tracking.
+
+## Paper Trading Results
+
+Paper trading launched May 4, 2026 with $20K starting capital.
+
+| # | Symbol | Setup | Entry | Exit | P&L | R | Exit Type | Status |
+|---|--------|-------|-------|------|-----|---|-----------|--------|
+| 1 | MU | — | $572.91 | $734.60 | +$323.36 | 2.79R | trailing_stop | Closed |
+| 2 | SMH | breakout | $517.22 | — | — | — | — | Open (trailing) |
+| 3 | AMD | continuation | $431.57 | — | — | — | — | Open (initial) |
+
 
 ## Cost Estimates
 

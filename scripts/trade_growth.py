@@ -2,7 +2,7 @@
 Growth Bot V1 — Trade script.
 
 Places stop-limit buy orders for growth momentum setups.
-Uses wider stops and more aggressive sizing than the conservative bot.
+Uses wider stops and aggressive sizing for momentum setups.
 """
 import json
 import hashlib

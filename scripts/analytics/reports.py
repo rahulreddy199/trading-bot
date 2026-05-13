@@ -86,7 +86,6 @@ def generate_daily_report(analytics=None, attribution=None):
     # ── OPEN POSITIONS (detailed) ──
     lines.append("## Open Positions")
     growth_tracking = _load_json(resolve_state("growth", "position_tracking.json"))
-    conservative_tracking = _load_json(resolve_state("conservative", "position_tracking.json"))
 
     try:
         positions = get_positions()
@@ -94,8 +93,8 @@ def generate_daily_report(analytics=None, attribution=None):
         positions = []
 
     if positions:
-        lines.append("| Symbol | Bot | Setup | Phase | Entry | Current | P&L | R | Best R | Bars | Stop |")
-        lines.append("|--------|-----|-------|-------|-------|---------|-----|---|--------|------|------|")
+        lines.append("| Symbol | Setup | Phase | Entry | Current | P&L | R | Best R | Bars | Stop |")
+        lines.append("|--------|-------|-------|-------|---------|-----|---|--------|------|------|")
         for pos in positions:
             sym = pos.get("symbol", "?")
             entry = float(pos.get("avg_entry_price", 0))
@@ -104,8 +103,7 @@ def generate_daily_report(analytics=None, attribution=None):
             qty = pos.get("qty", 0)
 
             # Find tracking data
-            track = growth_tracking.get(sym) or conservative_tracking.get(sym) or {}
-            bot = "growth" if sym in growth_tracking else "conservative" if sym in conservative_tracking else "?"
+            track = growth_tracking.get(sym, {})
             setup = track.get("setup_type", "?")
             phase = track.get("phase", "?")
             current_r = 0
@@ -118,7 +116,7 @@ def generate_daily_report(analytics=None, attribution=None):
             stop_str = f"${stop:,.2f}" if isinstance(stop, (int, float)) else str(stop)
 
             lines.append(
-                f"| {sym} | {bot} | {setup} | {phase} | ${entry:,.2f} | ${current:,.2f} "
+                f"| {sym} | {setup} | {phase} | ${entry:,.2f} | ${current:,.2f} "
                 f"| ${upl:+,.2f} | {current_r}R | {best_r}R | {bars} | {stop_str} |"
             )
     else:
@@ -349,7 +347,7 @@ def generate_daily_report(analytics=None, attribution=None):
     if positions and growth_tracking:
         for pos in positions:
             sym = pos.get("symbol", "?")
-            track = growth_tracking.get(sym) or conservative_tracking.get(sym) or {}
+            track = growth_tracking.get(sym, {})
             current = float(pos.get("current_price", 0))
             entry = float(pos.get("avg_entry_price", 0))
             stop = track.get("current_stop") or track.get("initial_stop")
