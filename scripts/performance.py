@@ -155,8 +155,8 @@ def compute_stats(trades, label="all"):
         "avg_pnl": round(sum(t["pnl"] for t in valid) / len(valid), 2),
         "avg_r": round(sum(r_multiples) / len(r_multiples), 2) if r_multiples else None,
         "total_pnl": round(sum(t["pnl"] for t in valid), 2),
-        "largest_winner": round(max((t["pnl"] for t in valid), default=0), 2),
-        "largest_loser": round(min((t["pnl"] for t in valid), default=0), 2),
+        "largest_winner": round(max((t["pnl"] for t in winners), default=0), 2),
+        "largest_loser": round(min((t["pnl"] for t in losers), default=0), 2),
     }
 
 
@@ -228,7 +228,10 @@ def main():
         print(f"Avg R-multiple: {all_time['avg_r']}")
         print(f"Total P&L: ${all_time['total_pnl']}")
         print(f"Largest winner: ${all_time['largest_winner']}")
-        print(f"Largest loser: ${all_time['largest_loser']}")
+        if all_time['largest_loser'] < 0:
+            print(f"Largest loser: ${all_time['largest_loser']}")
+        else:
+            print(f"Largest loser: —")
     else:
         print("No closed trades yet.")
     print(f"{'='*50}\n")

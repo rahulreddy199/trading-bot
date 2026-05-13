@@ -320,43 +320,43 @@ def handle_summary(ack, respond):
             tracking = load_json(tracking_path)
             if tracking:
                 for sym, track in tracking.items():
-                phase = track.get("phase", "?")
-                if phase in ("pending",):
-                    trigger = track.get("trigger_price", 0)
-                    limit = track.get("limit_price", 0)
-                    days_pending = track.get("bars_held", 0)
-                    lines.append(f"  ⏳ *{sym}* PENDING | trigger=${trigger:.2f} limit=${limit:.2f} | {days_pending}d")
-                    continue
+                    phase = track.get("phase", "?")
+                    if phase in ("pending",):
+                        trigger = track.get("trigger_price", 0)
+                        limit = track.get("limit_price", 0)
+                        days_pending = track.get("bars_held", 0)
+                        lines.append(f"  ⏳ *{sym}* PENDING | trigger=${trigger:.2f} limit=${limit:.2f} | {days_pending}d")
+                        continue
 
-                # Find current price from positions
-                pos = next((p for p in positions if p["symbol"] == sym), None)
-                if not pos:
-                    continue
+                    # Find current price from positions
+                    pos = next((p for p in positions if p["symbol"] == sym), None)
+                    if not pos:
+                        continue
 
-                current = float(pos["current_price"])
-                avg_entry = float(pos["avg_entry_price"])
-                r_per_share = track.get("r_per_share", 1)
-                current_r = (current - avg_entry) / r_per_share if r_per_share > 0 else 0
-                best_r = track.get("best_gain_r", 0)
-                bars = track.get("bars_held", 0)
-                stop = track.get("current_stop") or track.get("initial_stop", 0)
-                setup = track.get("setup_type", "?")
+                    current = float(pos["current_price"])
+                    avg_entry = float(pos["avg_entry_price"])
+                    r_per_share = track.get("r_per_share", 1)
+                    current_r = (current - avg_entry) / r_per_share if r_per_share > 0 else 0
+                    best_r = track.get("best_gain_r", 0)
+                    bars = track.get("bars_held", 0)
+                    stop = track.get("current_stop") or track.get("initial_stop", 0)
+                    setup = track.get("setup_type", "?")
 
-                # Next target
-                if phase == "initial":
-                    next_target = "1.5R (protected)"
-                elif phase == "protected":
-                    next_target = "2.5R (trailing)"
-                elif phase == "trailing":
-                    next_target = "riding 🚀"
-                else:
-                    next_target = "?"
+                    # Next target
+                    if phase == "initial":
+                        next_target = "1.5R (protected)"
+                    elif phase == "protected":
+                        next_target = "2.5R (trailing)"
+                    elif phase == "trailing":
+                        next_target = "riding 🚀"
+                    else:
+                        next_target = "?"
 
-                emoji = "🟢" if current_r > 0 else "🔴"
-                lines.append(
-                    f"  {emoji} *{sym}* | {phase} | {setup}\n"
-                    f"       R={current_r:.2f} (max {best_r:.1f}R) | {bars}d | stop=${stop:.2f} | → {next_target}"
-                )
+                    emoji = "🟢" if current_r > 0 else "🔴"
+                    lines.append(
+                        f"  {emoji} *{sym}* | {phase} | {setup}\n"
+                        f"       R={current_r:.2f} (max {best_r:.1f}R) | {bars}d | stop=${stop:.2f} | → {next_target}"
+                    )
 
         if not lines:
             respond("📭 No tracked positions.")
