@@ -460,6 +460,16 @@ def run_backtest(start_date="2024-05-01", end_date=None, initial_equity=20000.0,
 
                 r_per_share = trigger - stop
                 qty = risk_position_size(equity, risk_per_trade, trigger, stop, max_alloc)
+
+                # Volatility-targeted sizing
+                vol_cfg = strategy.get("volatility_sizing", {})
+                if vol_cfg.get("enabled", False) and atr > 0:
+                    atr_pct = atr / trigger
+                    for bucket in vol_cfg.get("atr_pct_buckets", []):
+                        if atr_pct <= bucket["max"]:
+                            qty = max(1, int(qty * bucket["scalar"]))
+                            break
+
                 if qty <= 0:
                     continue
 
