@@ -314,17 +314,12 @@ def handle_summary(ack, respond):
         positions = get_positions()
         lines = []
 
-        # Load tracking for both bots
-        for label, filename in [("Growth", "position_tracking_growth.json"), ("Conservative", "position_tracking.json")]:
-            tracking_path = STATE_DIR / filename
-            if not tracking_path.exists():
-                continue
+        # Load position tracking
+        tracking_path = STATE_DIR / "position_tracking_growth.json"
+        if tracking_path.exists():
             tracking = load_json(tracking_path)
-            if not tracking:
-                continue
-
-            lines.append(f"\n*{label} Bot*")
-            for sym, track in tracking.items():
+            if tracking:
+                for sym, track in tracking.items():
                 phase = track.get("phase", "?")
                 if phase in ("pending",):
                     trigger = track.get("trigger_price", 0)

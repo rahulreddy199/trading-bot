@@ -883,7 +883,7 @@ def startup_self_check():
             issues.append(f"Directory not writable: {d}")
 
     # Required config files
-    for fname in ["strategy.json", "watchlist.json", "guardrails.json"]:
+    for fname in ["strategy_growth.json", "watchlist_growth.json", "guardrails.json"]:
         path = CONFIG_DIR / fname
         if not path.exists():
             issues.append(f"Missing config: {path}")
