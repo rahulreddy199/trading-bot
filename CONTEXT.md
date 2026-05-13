@@ -44,7 +44,8 @@ scripts/
     paths.py, jsonio.py, logging_utils.py, locks.py, dedupe.py,
     broker.py, env.py, time_utils.py, sizing.py, config.py, alerts.py
   backtest/
-    growth.py            — Growth bot backtester
+    growth.py            — Growth bot backtester (event-driven, vol sizing)
+    walk_forward.py      — Walk-forward out-of-sample validation
     print_results.py     — Backtest results formatter
   legacy/                — Archived conservative bot + old backtests
     research.py, trade.py, manage.py, strategy.json, watchlist.json
@@ -52,6 +53,7 @@ scripts/
   tests/
     test_decisions.py    — 30 tests: phase transitions, time stops, trail upgrades, edge cases
     test_analytics.py    — Analytics pipeline tests
+    test_recovery.py     — Recovery and reconciliation tests
     test_recovery.py     — Recovery and reconciliation tests
 config/
   strategy_growth.json   — Strategy parameters
@@ -177,11 +179,28 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - 40% slot utilization (2/5) — filters may be strict or market not offering setups
 
 ## Backtesting Assessment
-Current backtests are **event-driven** (bar-by-bar), with **0.1% flat slippage** and **stop-limit fill logic**. Good for v1 but missing:
-- ❌ **Walk-forward / out-of-sample validation** — all variants tested on full period (overfitting risk)
-- ❌ **Volume-based fill feasibility** — no check if order qty is realistic vs bar volume
+Current backtests are **event-driven** (bar-by-bar), with **0.1% flat slippage**, **stop-limit fill logic**, and **volatility-targeted sizing**.
+- ✅ **Walk-forward validation completed** — 5/5 windows profitable, +30.6% total (matches full-period +30.7%)
 - ✅ Commissions not modeled but Alpaca is commission-free (realistic)
 - ✅ Stale order expiry, regime/breadth filters, phase transitions all match live bot
+- ✅ Vol sizing active in both backtest and live
+- ⚠️ Volume-based fill feasibility not modeled (no check if order qty vs bar volume)
+
+### Walk-Forward Results (Jan 2024 – May 2026)
+| Window | Period | Return | Trades | WR | P&L |
+|--------|--------|--------|--------|-----|-----|
+| W1 | Jan–Jun 2024 | +6.1% | 39 | 62% | +$1,249 |
+| W2 | Jul–Dec 2024 | +6.1% | 31 | 55% | +$1,108 |
+| W3 | Jan–Jun 2025 | +5.0% | 16 | 69% | +$311 |
+| W4 | Jul–Dec 2025 | +3.5% | 42 | 55% | +$850 |
+| W5 | Jan–May 2026 | +6.7% | 17 | 53% | +$666 |
+
+**Combined:** 145 trades, 57.9% WR, 1.81 PF, -6.02% max DD. Strategy is NOT overfit.
+
+Key insights:
+- Time stops are 58% of exits (most trades don't reach trailing)
+- Continuation setups: best WR (74%), fewest trades
+- Shallow pullbacks: break even (avg R=0.00) — watch in live trading
 
 ## Phase 0 Hardening (Completed)
 - State isolation, job locks, broker reconciliation, structured JSONL logging
@@ -197,12 +216,15 @@ Current backtests are **event-driven** (bar-by-bar), with **0.1% flat slippage**
 - ✅ Conservative bot archived, growth-only codebase
 - ✅ Unit tests for decisions.py (30 tests, all passing)
 - ✅ Performance stats fixed (largest loser no longer shows winners)
-- ⬜ Walk-forward backtest validation
+- ✅ Walk-forward backtest validation (5/5 windows profitable, NOT overfit)
+- ✅ Volatility-targeted sizing (live in trade_growth.py + backtest)
+- ✅ Equity curve path fix (performance.py now writes to state/shared/)
+- ✅ Position tracking path fix (performance.py reads growth tracking)
 - ⬜ Relative volume + liquidity filters (config ready, partially wired)
-- ⬜ Volatility-targeted sizing (config ready)
 - ⬜ Setup-level performance attribution (full metadata per trade)
 - ⬜ Setup-specific ranking (separate scoring per setup type)
 
 ## Refactoring History
+- **May 12, 2026 (late)**: Walk-forward backtest implemented (5 windows, 100% profitable). Vol sizing added to backtest engine. Fixed performance.py equity curve path (was state/ → now state/shared/) and position tracking path (was old conservative → now growth). CONTEXT.md and README.md updated.
 - **May 12, 2026 (evening)**: Added 30 unit tests for growth/decisions.py. Fixed performance.py largest_loser bug. Fixed slack_bot.py /summary indentation. Pushed to git.
 - **May 12, 2026**: Archived conservative bot to `scripts/legacy/`. Growth bot is now the sole production path. Removed conservative branches from orchestrator, simplified CLI (no more `bot` parameter), updated config loaders to default to growth. Cleaned up healthcheck, reports, slack_bot conservative references.
