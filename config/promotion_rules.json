@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "description": "Promotion gates for strategy experiments. A variant must pass ALL gates to be eligible for promotion.",
+
+  "gates": {
+    "min_trade_count": {
+      "description": "Minimum total trades across IS + OOS",
+      "value": 15,
+      "required": true
+    },
+    "min_oos_trade_count": {
+      "description": "Minimum out-of-sample trades",
+      "value": 8,
+      "required": true
+    },
+    "profit_factor_floor": {
+      "description": "Variant profit factor must be at least this value",
+      "value": 1.0,
+      "required": true
+    },
+    "expectancy_improvement_min": {
+      "description": "Variant expectancy must improve over baseline by at least this dollar amount (can be 0 for 'do no harm')",
+      "value": 0.0,
+      "required": true
+    },
+    "max_drawdown_increase_limit": {
+      "description": "Variant max drawdown cannot worsen by more than this absolute amount (e.g. 0.03 = 3%)",
+      "value": 0.03,
+      "required": true
+    },
+    "win_rate_floor": {
+      "description": "Variant win rate must be at least this fraction",
+      "value": 0.30,
+      "required": true
+    },
+    "avg_r_floor": {
+      "description": "Variant avg R must be at least this value",
+      "value": -0.5,
+      "required": true
+    },
+    "oos_profit_factor_floor": {
+      "description": "Out-of-sample profit factor must be at least this value",
+      "value": 0.8,
+      "required": true
+    },
+    "paper_incubation_required": {
+      "description": "If true, variant must complete paper incubation before promotion",
+      "value": true,
+      "required": true
+    },
+    "paper_min_trades": {
+      "description": "Minimum paper-trading trades before promotion is possible",
+      "value": 10,
+      "required": false
+    }
+  },
+
+  "is_oos_split": {
+    "description": "In-sample / out-of-sample split ratio for backtest evaluation",
+    "oos_fraction": 0.30,
+    "min_oos_days": 60
+  },
+
+  "notes": "Promotion is always recommendation-only. No automatic config changes."
+}
+

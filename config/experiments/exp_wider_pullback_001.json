@@ -1,0 +1,22 @@
+{
+  "experiment_id": "exp_wider_pullback_001",
+  "title": "Wider shallow pullback depth",
+  "hypothesis": "Increasing shallow_pullback max_depth_atr from 1.5 to 2.0 ATR will capture more setups without degrading expectancy, because many quality pullbacks retrace slightly deeper before resuming.",
+  "strategy_family": "growth_momentum",
+  "owner": "manual",
+  "approval_required": true,
+
+  "baseline_ref": "config/strategy_growth.json",
+  "variant_overrides": {
+    "setups.shallow_pullback.max_depth_atr": 2.0
+  },
+
+  "backtest": {
+    "start_date": "2024-06-01",
+    "end_date": "2026-05-01",
+    "initial_equity": 20000
+  },
+
+  "notes": "First experiment. Targeting trade-frequency improvement without expectancy loss."
+}
+

@@ -136,7 +136,24 @@ A variant should not become active unless it:
 - Survives a paper-trading incubation period.
 
 ### Status
-Next.
+**Implemented.** Core modules complete:
+- `scripts/analytics/variants.py` — Apply parameter overrides to baseline strategy
+- `scripts/analytics/scorecards.py` — Build and compare metric scorecards (IS/OOS)
+- `scripts/analytics/promotion.py` — Evaluate explicit promotion gates
+- `scripts/analytics/experiments.py` — Enhanced registry with full lifecycle
+- `scripts/analytics/evaluate_experiment.py` — End-to-end evaluation pipeline
+- `config/promotion_rules.json` — Configurable promotion criteria
+- `config/experiments/*.json` — Experiment definitions
+- `scripts/tests/test_phase2.py` — Comprehensive test suite
+
+### How to use
+```bash
+# 1. Define experiment in config/experiments/my_experiment.json
+# 2. Run evaluation:
+venv/bin/python scripts/analytics/evaluate_experiment.py config/experiments/my_experiment.json
+# 3. Review outputs in state/shared/experiments/
+# 4. Manually promote if gates pass and paper incubation confirms
+```
 
 ### Exit criteria
 - Every strategy change is tracked as an experiment.

@@ -1,0 +1,23 @@
+{
+  "experiment_id": "exp_trail_tighter_002",
+  "title": "Tighter trailing stop multiplier",
+  "hypothesis": "Reducing trailing_atr_multiplier from 3.0 to 2.5 will lock in more profit at the cost of some early exits, net improving avg R.",
+  "strategy_family": "growth_momentum",
+  "owner": "manual",
+  "approval_required": true,
+
+  "baseline_ref": "config/strategy_growth.json",
+  "variant_overrides": {
+    "exit.trailing_atr_multiplier": 2.5,
+    "exit.trailing_tight_atr_multiplier": 1.8
+  },
+
+  "backtest": {
+    "start_date": "2024-06-01",
+    "end_date": "2026-05-01",
+    "initial_equity": 20000
+  },
+
+  "notes": "Tests whether tighter trailing improves total P&L despite more early exits."
+}
+

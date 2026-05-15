@@ -1,4 +1,4 @@
-# Daily Review — 2026-05-13
+# Daily Review — 2026-05-14
 
 ## Headline Metrics
 | Metric | All-Time | 7-Day |
@@ -12,9 +12,9 @@
 | Slippage | 0.0 bps | 0.0 bps |
 
 ## Account
-- Equity: $20,557.27
+- Equity: $20,593.80
 - Open positions: 2
-- Unrealized P&L: $233.92
+- Unrealized P&L: $270.45
 
 ## Market Regime
 - Label: **unknown**
@@ -26,12 +26,12 @@
 ## Open Positions
 | Symbol | Setup | Phase | Entry | Current | P&L | R | Best R | Bars | Stop |
 |--------|-------|-------|-------|---------|-----|---|--------|------|------|
-| AMD | continuation | initial | $431.57 | $445.25 | $+13.68 | 0.23R | 0.55R | 4 | $372.75 |
-| SMH | breakout | trailing | $517.22 | $572.28 | $+220.24 | 1.77R | 1.9R | 7 | $540.83 |
+| AMD | continuation | initial | $431.57 | $446.58 | $+15.01 | 0.26R | 0.55R | 5 | $372.75 |
+| SMH | breakout | trailing | $517.22 | $581.08 | $+255.44 | 2.05R | 2.05R | 8 | $543.94 |
 
 ## Position Management Actions
-- **AMD**: hold_initial — price=$445.25 | R=0.23 | stop=$372.75
-- **SMH**: hold_trailing — price=$572.28 | R=1.77 | stop=$540.83
+- **AMD**: hold_initial — price=$446.58 | R=0.26 | stop=$372.75
+- **SMH**: hold_trailing — price=$581.08 | R=2.05 | stop=$543.94
 
 ## Research Summary
 - Candidates found: 0
@@ -41,8 +41,8 @@
   - below_sma200: 10
   - below_rank_cutoff: 9
   - sma50_below_sma200: 3
-  - low_rel_volume_shallow_pullback: 3
-  - rv=0.18<1.0: 1
+  - low_rel_volume_breakout: 2
+  - rv=0.09<1.5: 1
 
 ## Orders Today
 - No orders placed
@@ -64,20 +64,20 @@
 
 ## AI Recommendations
 - [high] **Continue paper trading to accumulate data** → monitor
-  - Only 5 closed trades. Need 20+ for reliable attribution.
+  - Only 1 closed trades. Need 20+ for reliable attribution.
 
 ## Equity Snapshot
-- Today: $20,539.78 (+26.33 / +0.13%)
-- Total return: $+539.78 (+2.70%)
-- Data points: 8 days
+- Today: $20,593.80 (+54.02 / +0.26%)
+- Total return: $+593.80 (+2.97%)
+- Data points: 9 days
 
 ## Market Context
-- SPY: $742.31 (+0.56%)
-- QQQ: $714.71 (+1.06%)
+- SPY: $748.17 (+0.79%)
+- QQQ: $719.79 (+0.71%)
 
 ## Position Price Context
-- **AMD**: price=$445.25 | stop distance=16.3% | best price=$464.10 | from best=-4.1%
-- **SMH**: price=$572.28 | stop distance=5.5% | best price=$576.17 | from best=-0.7%
+- **AMD**: price=$446.58 | stop distance=16.5% | best price=$464.10 | from best=-3.8%
+- **SMH**: price=$581.08 | stop distance=6.4% | best price=$581.08 | from best=+0.0%
 
 ## Near-Miss Candidates
 - **META**: missed by → below_sma200
