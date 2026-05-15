@@ -1,0 +1,81 @@
+{
+  "version": "1.0",
+  "description": "Phase 3 production hardening — kill switch, pause rules, pre-trade controls",
+
+  "kill_switch": {
+    "state_file": "state/controls/kill_switch.json",
+    "requires_manual_reset": true,
+    "cancel_open_orders_on_activate": true,
+    "flatten_positions_on_activate": false,
+    "cooldown_minutes_after_reset": 5
+  },
+
+  "pause_rules": {
+    "state_file": "state/controls/pause_state.json",
+    "requires_manual_reset": true,
+    "rules": {
+      "daily_loss_pct": {
+        "enabled": true,
+        "threshold": 3.0,
+        "description": "Pause if daily equity loss exceeds this percent"
+      },
+      "rolling_drawdown_pct": {
+        "enabled": true,
+        "threshold": 15.0,
+        "lookback_days": 30,
+        "description": "Pause if rolling drawdown exceeds this percent"
+      },
+      "abnormal_slippage_pct": {
+        "enabled": true,
+        "threshold": 1.5,
+        "min_fills_to_evaluate": 3,
+        "description": "Pause if average slippage exceeds this percent over recent fills"
+      },
+      "order_rejection_count": {
+        "enabled": true,
+        "threshold": 5,
+        "window_hours": 4,
+        "description": "Pause if order rejections in window exceed threshold"
+      },
+      "broker_error_count": {
+        "enabled": true,
+        "threshold": 10,
+        "window_hours": 1,
+        "description": "Pause if broker/API errors exceed threshold in window"
+      },
+      "stale_data_minutes": {
+        "enabled": true,
+        "threshold": 30,
+        "description": "Pause if market data is older than threshold during market hours"
+      },
+      "duplicate_order_count": {
+        "enabled": true,
+        "threshold": 3,
+        "description": "Pause if duplicate orders detected exceed threshold"
+      },
+      "heartbeat_missing_minutes": {
+        "enabled": true,
+        "threshold": 60,
+        "critical_scripts": ["research_growth", "trade_growth", "manage_growth"],
+        "description": "Pause if critical script heartbeat missing for this duration"
+      }
+    }
+  },
+
+  "pretrade": {
+    "max_position_size_pct": 25.0,
+    "max_allocation_per_symbol_pct": 25.0,
+    "max_total_open_risk_pct": 5.0,
+    "max_open_positions": 5,
+    "correlation_cap_threshold": 0.85,
+    "max_correlated_positions": 2,
+    "no_duplicate_pending_orders": true,
+    "price_sanity_max_deviation_pct": 10.0,
+    "min_order_qty": 1,
+    "max_order_qty": 1000,
+    "price_collar_pct": 5.0,
+    "check_kill_switch_first": true,
+    "check_pause_state_first": true
+  }
+}
+

@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "description": "Reconciliation settings for Phase 3 broker-vs-local state checks",
+
+  "enabled": true,
+  "run_after_trade": true,
+  "run_after_manage": true,
+  "run_on_schedule": true,
+
+  "checks": {
+    "orphaned_orders": {
+      "enabled": true,
+      "description": "Orders at broker with no matching local tracking"
+    },
+    "missing_tracking": {
+      "enabled": true,
+      "description": "Broker positions with no local position_tracking entry"
+    },
+    "stale_tracking": {
+      "enabled": true,
+      "description": "Local tracking for positions that no longer exist at broker"
+    },
+    "duplicate_orders": {
+      "enabled": true,
+      "description": "Multiple active orders for the same symbol"
+    },
+    "order_state_mismatch": {
+      "enabled": true,
+      "description": "Broker order status differs from expected local state"
+    },
+    "missing_stop_after_fill": {
+      "enabled": true,
+      "description": "Position exists but no trailing/stop order active"
+    },
+    "symbol_tradeable_while_paused": {
+      "enabled": true,
+      "description": "Orders active for symbols while system is paused/killed"
+    }
+  },
+
+  "safe_cleanup": {
+    "enabled": false,
+    "require_explicit_flag": true,
+    "allowed_actions": [
+      "cancel_orphaned_orders",
+      "remove_stale_tracking"
+    ]
+  },
+
+  "output": {
+    "json_path": "state/controls/reconciliation_result.json",
+    "markdown_path": "state/controls/reconciliation_report.md"
+  }
+}
+

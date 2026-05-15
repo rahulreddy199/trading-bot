@@ -195,13 +195,56 @@ A profitable strategy can still fail in production because of stale data, API er
 - Enhanced logging and audit trails for execution actions.
 
 ### Status
-Future.
+**Implemented.** Core modules complete:
+- `scripts/controls/kill_switch.py` — Global kill switch with persistence, cooldown, manual reset
+- `scripts/controls/pause_rules.py` — Automatic pause rules (daily loss, drawdown, errors, heartbeats)
+- `scripts/controls/pretrade.py` — Pre-trade control gate (10 checks, structured pass/fail)
+- `scripts/controls/reconcile.py` — Broker vs local state reconciliation with anomaly detection
+- `scripts/controls/health.py` — Health monitoring, heartbeat checks, status reporting
+- `scripts/controls/alerts.py` — Notification abstraction (log-only + webhook modes)
+- `scripts/controls/audit.py` — Structured JSONL audit logging for all safety actions
+- `config/risk_controls.json` — Kill switch, pause rules, pre-trade limits configuration
+- `config/alerting.json` — Alert routing and event configuration
+- `config/reconciliation.json` — Reconciliation checks and safe cleanup settings
+- `scripts/control_state.py` — CLI: view state, activate kill, pause, health check
+- `scripts/reset_controls.py` — CLI: safe manual reset with cooldown
+- `scripts/tests/test_phase3.py` — 54 tests covering all control paths
+
+### How to use
+```bash
+# View control state
+python3 scripts/control_state.py status
+
+# Activate kill switch
+python3 scripts/control_state.py kill "Reason for halt"
+
+# Activate manual pause
+python3 scripts/control_state.py pause "Reason for pause"
+
+# Run health check
+python3 scripts/control_state.py health
+
+# View audit log
+python3 scripts/control_state.py audit
+
+# Reset kill switch (with cooldown)
+python3 scripts/reset_controls.py reset_kill
+
+# Reset pause state
+python3 scripts/reset_controls.py reset_pause
+
+# Reset status overview
+python3 scripts/reset_controls.py status
+
+# Run tests
+python3 -m pytest scripts/tests/test_phase3.py -v
+```
 
 ### Exit criteria
-- Bot can be paused quickly and safely.
-- Recovery from common failure modes is documented and testable.
-- Strategy cannot continue trading silently under degraded conditions.
-- Live operations are observable in near real time.
+- Bot can be paused quickly and safely. ✅
+- Recovery from common failure modes is documented and testable. ✅
+- Strategy cannot continue trading silently under degraded conditions. ✅
+- Live operations are observable in near real time. ✅
 
 ## Phase 4 — Bounded self-improvement
 
@@ -278,10 +321,11 @@ Any future strategy or automation change should answer these questions before ac
 
 ## Practical next step
 
-The next milestone is **Phase 2**:
-- define experiment scorecards,
-- encode promotion criteria,
-- run a small number of focused experiments,
-- require paper-trading validation before any strategy promotion.
+The next milestone is **Phase 4**:
+- Introduce bounded variant selection among pre-approved parameters,
+- Add automatic rollback on live underperformance,
+- Expand watchlist and strategy family only after Phases 2–3 are proven stable.
 
 That keeps the project aligned with its current design: systematic, explainable, and safe-by-default.
+
+Phases 2 and 3 are now complete. The system has a controlled experiment loop and production-grade safety controls. Phase 4 can begin once enough paper trading data validates the operational stability of the current infrastructure.

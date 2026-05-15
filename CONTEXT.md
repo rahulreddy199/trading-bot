@@ -2,7 +2,7 @@
 
 ## Last Updated: May 14, 2026
 
-## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only | Phase 2 Experiment Loop Implemented
+## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only | Phase 3 Production Hardening Implemented
 
 ## Quick Summary
 - **Paper trading with Alpaca** since May 4, 2026 ($20K starting capital)
@@ -10,7 +10,8 @@
 - **3 trades entered**, 1 closed (MU: +$323.36, +2.79R trailing stop exit)
 - **2 positions open**: AMD (continuation, initial phase), SMH (breakout, trailing phase)
 - **Current equity**: ~$20,540
-- **95 unit tests** all passing (decisions, analytics, recovery, Phase 2 experiment loop)
+- **149 unit tests** all passing (decisions, analytics, recovery, Phase 2, Phase 3 controls)
+- **Phase 3 production hardening implemented** — kill switch, pause rules, pre-trade controls, reconciliation, health monitoring, alerting, audit logging
 - **Phase 2 experiment loop implemented** — controlled backtest evaluation, promotion gates, IS/OOS split
 - **Watchlist expanded to 33 symbols** across 8 sectors (added LLY, JPM, FTNT, ZS, FIX, GNRC)
 
@@ -29,7 +30,17 @@ scripts/
   common.py              — Pure re-export facade (41 lines, all logic in infra/)
   reconcile.py           — Broker-vs-local state reconciliation
   healthcheck.py         — System health checks
+  control_state.py       — Phase 3 CLI: status, kill, pause, health, audit
+  reset_controls.py      — Phase 3 CLI: safe manual reset with cooldown
   run.sh                 — Smart runner: auto-detects time, runs correct routine
+  controls/
+    kill_switch.py       — Phase 3: global kill switch (persistent, cooldown, manual reset)
+    pause_rules.py       — Phase 3: automatic pause rules (daily loss, drawdown, errors, heartbeats)
+    pretrade.py          — Phase 3: pre-trade control gate (10 checks, structured pass/fail)
+    reconcile.py         — Phase 3: broker vs local state reconciliation with anomaly detection
+    health.py            — Phase 3: health monitoring, heartbeat checks, status reporting
+    alerts.py            — Phase 3: notification abstraction (log-only + webhook modes)
+    audit.py             — Phase 3: structured JSONL audit logging for safety actions
   analytics/
     pipeline.py          — Daily analytics orchestrator
     metrics.py           — Performance metrics computation
@@ -61,19 +72,23 @@ scripts/
     test_analytics.py    — 15 tests: metrics, attribution, AI review, experiments
     test_recovery.py     — 20 tests: recovery, reconciliation, broker mismatch
     test_phase2.py       — 30 tests: variants, scorecards, promotion gates, lifecycle, IS/OOS regression
+    test_phase3.py       — 54 tests: kill switch, pause rules, pre-trade controls, reconciliation, health, audit
 config/
   strategy_growth.json   — Strategy parameters
   watchlist_growth.json  — 33 symbols across 8 sectors
   guardrails.json        — Safety bounds for auto-tuning
   promotion_rules.json   — Phase 2: experiment promotion gate config
+  risk_controls.json     — Phase 3: kill switch, pause rules, pre-trade limits
+  alerting.json          — Phase 3: alert routing and event config
+  reconciliation.json    — Phase 3: reconciliation checks and safe cleanup settings
   experiments/           — Phase 2: experiment definitions (JSON)
 state/
   growth/                — Position tracking, candidates, orders, manage log
   shared/                — Equity curve, performance, AI review, daily/weekly reports
+  controls/              — Phase 3: kill switch state, pause state, audit logs
   locks/                 — Job lock files
   logs/                  — Structured JSONL daily logs
-  trade_history.json     — All closed trades (format: {"trades": [...]})
-journal/                 — Daily markdown journals (pushed to git)
+  trade_history.json     — All closed trades (format: {"trades": [...]})journal/                 — Daily markdown journals (pushed to git)
 ```
 
 ## Growth Bot Strategy (Primary)
@@ -143,6 +158,9 @@ Healthcare: LLY | Financials: JPM | Industrials: FIX, GNRC
 | experiments.json | state/shared/ | Phase 2: experiment registry |
 | experiments/*_result.json | state/shared/ | Phase 2: experiment evaluation results |
 | experiments/*_report.md | state/shared/ | Phase 2: experiment comparison reports |
+| kill_switch.json | state/controls/ | Phase 3: kill switch state (active/reason/timestamp) |
+| pause_state.json | state/controls/ | Phase 3: pause state (active/triggered rules) |
+| audit.jsonl | state/controls/ | Phase 3: structured safety event audit log |
 
 ## Reports (Enriched for AI Learning)
 
@@ -277,8 +295,50 @@ Key insights:
 - `exp_wider_pullback_001` — Increase shallow pullback max_depth_atr from 1.5 → 2.0
 - `exp_trail_tighter_002` — Tighten trailing_atr_multiplier from 3.0 → 2.5
 
+## Phase 3: Production Hardening (Implemented May 14, 2026)
+
+### Modules (`scripts/controls/`)
+- `kill_switch.py` — Global kill switch with persistence, cooldown, requires manual reset
+- `pause_rules.py` — Automatic pause rules: daily loss, rolling drawdown, slippage, rejections, broker errors, stale data, duplicate orders, heartbeat missing
+- `pretrade.py` — Pre-trade control gate: 10 checks (kill switch, pause, position limits, allocation, risk budget, correlation, dedup, price sanity, qty bounds, price collar)
+- `reconcile.py` — Broker vs local state reconciliation with anomaly detection and markdown report
+- `health.py` — Health monitoring: heartbeat freshness, job status, control state, composite health score
+- `alerts.py` — Notification abstraction: log-only mode (default) + webhook mode for Slack/custom
+- `audit.py` — Structured JSONL audit logging for all safety actions (kill, pause, pre-trade block, reconciliation anomaly)
+
+### CLI Tools
+- `scripts/control_state.py` — View status, activate kill switch, activate pause, run health check, view audit log
+- `scripts/reset_controls.py` — Safe manual reset with cooldown enforcement, status overview
+
+### Config
+- `config/risk_controls.json` — Kill switch settings, 8 pause rules with thresholds, pre-trade limits
+- `config/alerting.json` — Alert routing: which events trigger which notification channels
+- `config/reconciliation.json` — Reconciliation checks, safe cleanup settings
+
+### Key Features
+- Kill switch is persistent (survives restarts), requires explicit manual reset
+- Pause rules auto-trigger but require manual reset (no silent auto-resume)
+- Pre-trade gate returns structured pass/fail with reasons — integrates before any order placement
+- All safety events written to audit log (JSONL) for compliance and debugging
+- Health check provides composite status: HEALTHY / DEGRADED / CRITICAL
+- Alerts support log-only (default) and webhook modes for progressive rollout
+- 54 dedicated tests covering all control paths
+
+### Usage
+```bash
+python3 scripts/control_state.py status       # View all control states
+python3 scripts/control_state.py kill "reason" # Activate kill switch
+python3 scripts/control_state.py pause "reason" # Manual pause
+python3 scripts/control_state.py health        # Health check
+python3 scripts/control_state.py audit         # View audit log
+python3 scripts/reset_controls.py reset_kill   # Reset kill (with cooldown)
+python3 scripts/reset_controls.py reset_pause  # Reset pause
+python3 scripts/reset_controls.py status       # Reset status overview
+```
+
 ## Refactoring History
-- **May 14, 2026**: Phase 2 implemented — controlled experiment loop with variants, scorecards, IS/OOS split, promotion gates, evaluation pipeline. 30 new tests (95 total). Watchlist expanded from 27 → 33 symbols (added LLY, JPM, FTNT, ZS, FIX, GNRC for sector diversification: Healthcare, Financials, Industrials). README and CONTEXT updated.
+- **May 14, 2026 (Phase 3)**: Production hardening implemented — kill switch, pause rules (8 auto-triggers), pre-trade control gate (10 checks), reconciliation with anomaly detection, health monitoring, alerting abstraction, structured audit logging. CLI tools for control_state and reset_controls. 54 new tests (149 total). Config: risk_controls.json, alerting.json, reconciliation.json.
+- **May 14, 2026 (Phase 2)**: Controlled experiment loop with variants, scorecards, IS/OOS split, promotion gates, evaluation pipeline. 30 new tests (95 total). Watchlist expanded from 27 → 33 symbols (added LLY, JPM, FTNT, ZS, FIX, GNRC for sector diversification: Healthcare, Financials, Industrials). README and CONTEXT updated.
 - **May 13, 2026**: Full script audit — all 22 modules import clean, all scripts run successfully, 65 tests pass. SSH key setup for dual GitHub accounts. Pushed to git.
 - **May 12, 2026 (late)**: Walk-forward backtest implemented (5 windows, 100% profitable). Vol sizing added to backtest engine. Fixed performance.py equity curve path (was state/ → now state/shared/) and position tracking path (was old conservative → now growth). CONTEXT.md and README.md updated.
 - **May 12, 2026 (evening)**: Added 30 unit tests for growth/decisions.py. Fixed performance.py largest_loser bug. Fixed slack_bot.py /summary indentation. Pushed to git.

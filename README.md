@@ -172,6 +172,9 @@ config/
   watchlist_growth.json    # Watchlist (33 symbols, 8 sectors)
   guardrails.json          # Safety bounds for auto-tuning
   promotion_rules.json     # Phase 2: experiment promotion gates
+  risk_controls.json       # Phase 3: kill switch, pause rules, pre-trade limits
+  alerting.json            # Phase 3: alert routing and event config
+  reconciliation.json      # Phase 3: reconciliation checks and cleanup settings
   experiments/             # Phase 2: experiment definitions
 scripts/
   orchestrator.py          # Claude-powered autonomous agent (the brain)
@@ -186,7 +189,17 @@ scripts/
   common.py                # Shared utilities + compatibility facade
   reconcile.py             # Broker-vs-local state reconciliation
   healthcheck.py           # System health checks
+  control_state.py         # Phase 3: CLI for status, kill, pause, health, audit
+  reset_controls.py        # Phase 3: safe manual reset with cooldown
   run.sh                   # Smart runner: auto-detects ET time, runs correct routine
+  controls/                # Phase 3: production hardening controls
+    kill_switch.py         # Global kill switch (persistent, cooldown, manual reset)
+    pause_rules.py         # Automatic pause rules (8 triggers)
+    pretrade.py            # Pre-trade control gate (10 checks)
+    reconcile.py           # Broker vs local reconciliation + anomaly detection
+    health.py              # Health monitoring + heartbeat checks
+    alerts.py              # Notification abstraction (log + webhook)
+    audit.py               # Structured JSONL audit logging
   analytics/               # Analytics + experiment loop
     pipeline.py            # Daily analytics orchestrator
     metrics.py             # Performance metrics computation
@@ -213,14 +226,16 @@ scripts/
   legacy/                  # Archived code (conservative bot)
     research.py, trade.py, manage.py, strategy.json, watchlist.json
     backtest_conservative/
-  tests/                   # Test suite (95 tests)
+  tests/                   # Test suite (149 tests)
     test_decisions.py      # 30 unit tests for phase-transition logic
     test_analytics.py      # Analytics pipeline tests
     test_recovery.py       # Recovery and reconciliation tests
     test_phase2.py         # Phase 2: experiment loop, scorecards, promotion gates
+    test_phase3.py         # Phase 3: kill switch, pause, pre-trade, reconcile, health, audit
 state/                     # Runtime state (gitignored except reports)
   growth/                  # Position tracking, candidates, orders, manage log
   shared/                  # Equity curve, AI review history, daily/weekly reports
+  controls/                # Phase 3: kill switch state, pause state, audit log
   locks/                   # Job lock files
   logs/                    # Structured JSONL daily logs
 journal/                   # Daily journals (pushed to git)
@@ -387,6 +402,80 @@ proposed → active_backtest → active_paper → promoted
 
 ---
 
+## Phase 3: Production Hardening
+
+Operational safety controls that ensure the bot degrades gracefully under failures, volatility, and execution anomalies.
+
+### Kill Switch
+- Persistent state file (survives restarts)
+- Triggered manually or auto-triggered by critical failures
+- Requires explicit manual reset with cooldown period
+- Optionally cancels all open orders on activation
+
+### Automatic Pause Rules (8 triggers)
+| Rule | Threshold | Description |
+|------|-----------|-------------|
+| Daily loss | 3% | Equity drop from prior close |
+| Rolling drawdown | 15% | 30-day rolling max drawdown |
+| Abnormal slippage | 1.5% | Average slippage over recent fills |
+| Order rejections | 5 in 4h | Repeated broker rejections |
+| Broker errors | 10 in 1h | API failures |
+| Stale data | 30 min | Market data freshness during hours |
+| Duplicate orders | 3 | Duplicate order detection |
+| Heartbeat missing | 60 min | Critical script heartbeat stale |
+
+All pause rules require **manual reset** — no silent auto-resume.
+
+### Pre-Trade Control Gate (10 checks)
+Every order passes through a structured gate before submission:
+1. Kill switch check
+2. Pause state check
+3. Position count limit
+4. Per-symbol allocation cap
+5. Total portfolio risk budget
+6. Correlation cap
+7. Duplicate pending order check
+8. Price sanity (deviation from recent close)
+9. Quantity bounds
+10. Price collar
+
+Returns structured pass/fail with specific reasons for each blocked order.
+
+### Reconciliation
+- Broker vs local state comparison with anomaly detection
+- Detects: orphaned orders, missing tracking, position mismatches
+- Generates markdown report for manual review
+- Safe cleanup mode (configurable)
+
+### Health Monitoring
+- Heartbeat freshness checks for all critical scripts
+- Composite health score: HEALTHY / DEGRADED / CRITICAL
+- Control state integration (kill switch + pause status)
+
+### Alerting
+- Log-only mode (default) — all alerts go to structured logs
+- Webhook mode — Slack/custom webhook for critical events
+- Progressive rollout: start with logs, add webhooks after validation
+
+### Audit Logging
+- All safety events written to JSONL audit log
+- Events: kill switch activations, pause triggers, pre-trade blocks, reconciliation anomalies, manual resets
+- Structured format for compliance review and debugging
+
+### CLI Tools
+```bash
+python3 scripts/control_state.py status        # View all control states
+python3 scripts/control_state.py kill "reason"  # Activate kill switch
+python3 scripts/control_state.py pause "reason" # Manual pause
+python3 scripts/control_state.py health         # Health check
+python3 scripts/control_state.py audit          # View audit log
+python3 scripts/reset_controls.py reset_kill    # Reset kill switch (with cooldown)
+python3 scripts/reset_controls.py reset_pause   # Reset pause state
+python3 scripts/reset_controls.py status        # Reset status overview
+```
+
+---
+
 ## Paper Trading Results
 
 Paper trading launched May 4, 2026 with $20K starting capital.
@@ -430,7 +519,9 @@ Strategy is validated as NOT overfit — walk-forward return matches full-period
 ## Safety & Guardrails
 
 - **Paper trading by default** — live trading requires explicit env var
-- **Kill switch** — create `state/KILL_SWITCH` to instantly halt all entries
+- **Kill switch** — persistent state file, requires manual reset with cooldown (Phase 3)
+- **Automatic pause rules** — 8 triggers: daily loss, drawdown, slippage, rejections, errors, stale data, duplicates, heartbeats (Phase 3)
+- **Pre-trade control gate** — 10 structured checks before every order (Phase 3)
 - **Daily loss breaker** — halts new entries if equity drops >3% from prior close; management continues
 - **Portfolio drawdown breaker** — halts new entries if drawdown from equity peak exceeds 15%
 - **VIX override** — forces reduced risk when VIX > 30
@@ -439,6 +530,7 @@ Strategy is validated as NOT overfit — walk-forward return matches full-period
 - **Stale data protection** — refuses to execute if research data isn't from today
 - **Correlation cap** (growth bot) — blocks concentrated correlated bets
 - **Time stop** (growth bot) — exits dead positions after 10 bars
+- **Audit logging** — all safety events logged to JSONL for compliance (Phase 3)
 - **No averaging down, no revenge trading, no extended hours, no holding through earnings**
 
 ## Pre-Live Checklist

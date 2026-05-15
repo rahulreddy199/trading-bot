@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "description": "Alerting configuration for Phase 3 controls",
+
+  "mode": "log_only",
+  "modes_available": ["log_only", "webhook", "all"],
+
+  "webhook": {
+    "url_env_var": "ALERT_WEBHOOK_URL",
+    "timeout_seconds": 10,
+    "retry_count": 1
+  },
+
+  "events": {
+    "kill_switch_triggered": {
+      "enabled": true,
+      "severity": "critical"
+    },
+    "pause_triggered": {
+      "enabled": true,
+      "severity": "warning"
+    },
+    "order_rejection_spike": {
+      "enabled": true,
+      "severity": "warning"
+    },
+    "reconciliation_anomaly": {
+      "enabled": true,
+      "severity": "warning"
+    },
+    "missing_heartbeat": {
+      "enabled": true,
+      "severity": "warning"
+    },
+    "trade_while_paused": {
+      "enabled": true,
+      "severity": "critical"
+    },
+    "trade_while_killed": {
+      "enabled": true,
+      "severity": "critical"
+    },
+    "promotion_while_unhealthy": {
+      "enabled": true,
+      "severity": "warning"
+    }
+  }
+}
+

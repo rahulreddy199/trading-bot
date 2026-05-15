@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-05-14T22:10:39.395472-04:00",
+  "overall_status": "degraded",
+  "kill_switch": {
+    "active": false,
+    "reason": null,
+    "triggered_at": null
+  },
+  "pause_state": {
+    "paused": false,
+    "rules": []
+  },
+  "heartbeats": {
+    "total_expected": 5,
+    "issues": [
+      {
+        "script": "research_growth",
+        "issue": "stale_heartbeat",
+        "age_minutes": 748,
+        "max_age_minutes": 360,
+        "description": "Heartbeat for research_growth is 748m old (max: 360m)",
+        "severity": "warning"
+      },
+      {
+        "script": "trade_growth",
+        "issue": "stale_heartbeat",
+        "age_minutes": 748,
+        "max_age_minutes": 360,
+        "description": "Heartbeat for trade_growth is 748m old (max: 360m)",
+        "severity": "warning"
+      }
+    ],
+    "issue_count": 2
+  },
+  "reconciliation": {},
+  "post_kill_violations": [],
+  "alert_status": false
+}
