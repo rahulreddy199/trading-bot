@@ -109,15 +109,18 @@ Every fill records planned trigger, planned limit, actual fill price, and slippa
 - Blocks entry if candidate is > 0.85 correlated with 2+ existing positions
 - Configurable fail-open/fail-closed on data errors
 
-### Growth Watchlist (27 Symbols)
+### Growth Watchlist (33 Symbols)
 
 | Sector | Symbols |
 |--------|---------|
 | **ETFs** | SPY, QQQ, IWM, SMH |
-| **Technology** | NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP |
+| **Technology** | NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP, FTNT, ZS |
 | **Communication** | NFLX |
 | **Consumer** | TSLA |
 | **Materials** | FCX, NUE |
+| **Healthcare** | LLY |
+| **Financials** | JPM |
+| **Industrials** | FIX, GNRC |
 
 ---
 
@@ -166,8 +169,10 @@ python scripts/orchestrator.py weekly
 ```
 config/
   strategy_growth.json     # Strategy parameters
-  watchlist_growth.json    # Watchlist (27 symbols)
+  watchlist_growth.json    # Watchlist (33 symbols, 8 sectors)
   guardrails.json          # Safety bounds for auto-tuning
+  promotion_rules.json     # Phase 2: experiment promotion gates
+  experiments/             # Phase 2: experiment definitions
 scripts/
   orchestrator.py          # Claude-powered autonomous agent (the brain)
   research_growth.py       # Market scan + candidate selection
@@ -182,14 +187,18 @@ scripts/
   reconcile.py             # Broker-vs-local state reconciliation
   healthcheck.py           # System health checks
   run.sh                   # Smart runner: auto-detects ET time, runs correct routine
-  analytics/               # Analytics pipeline
+  analytics/               # Analytics + experiment loop
     pipeline.py            # Daily analytics orchestrator
     metrics.py             # Performance metrics computation
     attribution.py         # Setup-level and grouped attribution
     ai_review.py           # AI review recommendations (daily + cumulative history)
     reports.py             # Daily and weekly report generation (enriched for AI learning)
     regime.py              # Market regime analysis
-    experiments.py         # A/B experiment tracking
+    experiments.py         # Phase 2: experiment registry with lifecycle management
+    variants.py            # Phase 2: apply parameter overrides to baseline strategy
+    scorecards.py          # Phase 2: build/compare metric scorecards (IS/OOS)
+    promotion.py           # Phase 2: evaluate promotion gates
+    evaluate_experiment.py # Phase 2: end-to-end experiment evaluation pipeline
   growth/                  # Core growth bot modules
     decisions.py           # Pure phase-transition decision logic (no broker calls)
     broker_exec.py         # Broker execution helpers (cancel, replace, submit)
@@ -204,10 +213,11 @@ scripts/
   legacy/                  # Archived code (conservative bot)
     research.py, trade.py, manage.py, strategy.json, watchlist.json
     backtest_conservative/
-  tests/                   # Test suite
+  tests/                   # Test suite (95 tests)
     test_decisions.py      # 30 unit tests for phase-transition logic
     test_analytics.py      # Analytics pipeline tests
     test_recovery.py       # Recovery and reconciliation tests
+    test_phase2.py         # Phase 2: experiment loop, scorecards, promotion gates
 state/                     # Runtime state (gitignored except reports)
   growth/                  # Position tracking, candidates, orders, manage log
   shared/                  # Equity curve, AI review history, daily/weekly reports
@@ -343,6 +353,39 @@ Both daily and weekly reports are designed as structured inputs for AI analysis 
 - **What to watch next week**: upcoming catalysts and areas to monitor
 
 Reports are saved to `state/shared/` and pushed to git for version tracking.
+
+## Phase 2: Controlled Experiment Loop
+
+Every strategy change goes through a disciplined experiment pipeline — no ad hoc tuning.
+
+### Workflow
+1. **Define** — Create `config/experiments/my_experiment.json` with hypothesis + parameter overrides
+2. **Evaluate** — Run `python scripts/analytics/evaluate_experiment.py config/experiments/my_experiment.json`
+3. **Review** — Read the generated markdown report and promotion gate results in `state/shared/experiments/`
+4. **Paper incubate** — If backtest gates pass, run the variant in paper trading
+5. **Promote or reject** — After paper incubation confirms, manually apply or reject
+
+### Experiment Lifecycle
+```
+proposed → active_backtest → active_paper → promoted
+                ↓                  ↓              ↓
+             rejected          rejected      rolled_back
+```
+
+### Promotion Gates (configurable in `config/promotion_rules.json`)
+- Minimum total trade count (15) and OOS trade count (8)
+- Profit factor ≥ 1.0 overall, ≥ 0.8 out-of-sample
+- Expectancy must not degrade vs baseline
+- Max drawdown cannot worsen by more than 3%
+- Win rate ≥ 30%, avg R ≥ -0.5
+- Paper incubation required before promotion
+- **No auto-promotion** — output is recommendation-only
+
+### Example Experiments Included
+- `exp_wider_pullback_001` — Increase shallow pullback depth from 1.5 to 2.0 ATR
+- `exp_trail_tighter_002` — Tighten trailing stop from 3.0 to 2.5 ATR
+
+---
 
 ## Paper Trading Results
 

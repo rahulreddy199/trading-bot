@@ -27,7 +27,14 @@
     { "ticker": "UBER", "enabled": true, "type": "stock", "sector": "Technology" },
     { "ticker": "SHOP", "enabled": true, "type": "stock", "sector": "Technology" },
     { "ticker": "FCX",  "enabled": true, "type": "stock", "sector": "Materials" },
-    { "ticker": "NUE",  "enabled": true, "type": "stock", "sector": "Materials" }
+    { "ticker": "NUE",  "enabled": true, "type": "stock", "sector": "Materials" },
+
+    { "ticker": "LLY",  "enabled": true, "type": "stock", "sector": "Healthcare" },
+    { "ticker": "JPM",  "enabled": true, "type": "stock", "sector": "Financials" },
+    { "ticker": "FTNT", "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "ZS",   "enabled": true, "type": "stock", "sector": "Technology" },
+    { "ticker": "FIX",  "enabled": true, "type": "stock", "sector": "Industrials" },
+    { "ticker": "GNRC", "enabled": true, "type": "stock", "sector": "Industrials" }
   ]
 }
 

@@ -1,16 +1,18 @@
 # Trading Bot - Project Context & Status
 
-## Last Updated: May 12, 2026 (evening)
+## Last Updated: May 14, 2026
 
-## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only
+## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only | Phase 2 Experiment Loop Implemented
 
 ## Quick Summary
 - **Paper trading with Alpaca** since May 4, 2026 ($20K starting capital)
 - **Growth bot is the sole production bot** — conservative bot archived to `scripts/legacy/`
 - **3 trades entered**, 1 closed (MU: +$323.36, +2.79R trailing stop exit)
 - **2 positions open**: AMD (continuation, initial phase), SMH (breakout, trailing phase)
-- **Current equity**: ~$20,535
-- **30 unit tests** covering decisions.py phase-transition logic — all passing
+- **Current equity**: ~$20,540
+- **95 unit tests** all passing (decisions, analytics, recovery, Phase 2 experiment loop)
+- **Phase 2 experiment loop implemented** — controlled backtest evaluation, promotion gates, IS/OOS split
+- **Watchlist expanded to 33 symbols** across 8 sectors (added LLY, JPM, FTNT, ZS, FIX, GNRC)
 
 ## Architecture
 ```
@@ -35,7 +37,11 @@ scripts/
     ai_review.py         — AI review (daily + cumulative history)
     reports.py           — Daily and weekly report generation (enriched for AI learning)
     regime.py            — Market regime analysis
-    experiments.py       — A/B experiment tracking
+    experiments.py       — Phase 2: experiment registry with lifecycle (7 statuses)
+    variants.py          — Phase 2: apply parameter overrides to baseline strategy
+    scorecards.py        — Phase 2: build/compare metric scorecards (IS/OOS)
+    promotion.py         — Phase 2: evaluate promotion gates
+    evaluate_experiment.py — Phase 2: end-to-end experiment evaluation pipeline
   growth/
     decisions.py         — Pure phase-transition decision logic (no broker calls, 30 unit tests)
     broker_exec.py       — Broker execution helpers (cancel, replace, submit)
@@ -52,13 +58,15 @@ scripts/
     backtest_conservative/ (conservative.py, matrix.py, improvement.py, variants.py)
   tests/
     test_decisions.py    — 30 tests: phase transitions, time stops, trail upgrades, edge cases
-    test_analytics.py    — Analytics pipeline tests
-    test_recovery.py     — Recovery and reconciliation tests
-    test_recovery.py     — Recovery and reconciliation tests
+    test_analytics.py    — 15 tests: metrics, attribution, AI review, experiments
+    test_recovery.py     — 20 tests: recovery, reconciliation, broker mismatch
+    test_phase2.py       — 30 tests: variants, scorecards, promotion gates, lifecycle, IS/OOS regression
 config/
   strategy_growth.json   — Strategy parameters
-  watchlist_growth.json  — 27 symbols
+  watchlist_growth.json  — 33 symbols across 8 sectors
   guardrails.json        — Safety bounds for auto-tuning
+  promotion_rules.json   — Phase 2: experiment promotion gate config
+  experiments/           — Phase 2: experiment definitions (JSON)
 state/
   growth/                — Position tracking, candidates, orders, manage log
   shared/                — Equity curve, performance, AI review, daily/weekly reports
@@ -70,7 +78,7 @@ journal/                 — Daily markdown journals (pushed to git)
 
 ## Growth Bot Strategy (Primary)
 - **Style:** Aggressive momentum swing trading, daily timeframe
-- **Universe:** 27 symbols — 4 ETFs (SPY, QQQ, IWM, SMH) + 23 stocks (tech-heavy)
+- **Universe:** 33 symbols — 4 ETFs (SPY, QQQ, IWM, SMH) + 29 stocks (8 sectors)
 - **Regime filter:** SPY + QQQ both above 50-day SMA (full_risk / reduced_risk / risk_off)
 - **Ranking:** Composite score: RS vs SPY (3m 50%, 6m 30%) + trend strength (20%), top 25% qualify
 - **Setups:**
@@ -104,10 +112,11 @@ journal/                 — Daily markdown journals (pushed to git)
 | ≤6.0% | 0.70× |
 | >6.0% | 0.50× |
 
-### Growth Watchlist (27 symbols)
+### Growth Watchlist (33 symbols, 8 sectors)
 ETFs: SPY, QQQ, IWM, SMH
-Tech: NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP
+Tech: NVDA, AMD, AVGO, ANET, META, AMZN, MSFT, AAPL, GOOGL, PLTR, MU, CRM, NOW, PANW, CRWD, SNOW, TTD, UBER, SHOP, FTNT, ZS
 Communication: NFLX | Consumer: TSLA | Materials: FCX, NUE
+Healthcare: LLY | Financials: JPM | Industrials: FIX, GNRC
 
 ## Daily Operations
 | Time (ET) | Routine | Command |
@@ -131,6 +140,9 @@ Communication: NFLX | Consumer: TSLA | Materials: FCX, NUE
 | ai_review_history.json | state/shared/ | Cumulative AI reviews (365 days) |
 | report_daily_*.md | state/shared/ | Enriched daily reports (in git) |
 | report_weekly_*.md | state/shared/ | Enriched weekly reports (in git) |
+| experiments.json | state/shared/ | Phase 2: experiment registry |
+| experiments/*_result.json | state/shared/ | Phase 2: experiment evaluation results |
+| experiments/*_report.md | state/shared/ | Phase 2: experiment comparison reports |
 
 ## Reports (Enriched for AI Learning)
 
@@ -175,8 +187,9 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - Trade history setup_type/bars_held show "?" for order_scan-detected closes
 - Attribution shows "unknown" for closed trades (needs richer recording at close time)
 - Equity curve has limited data points (started May 4)
-- All positions currently in Technology sector (concentration risk flagged)
+- Sector diversification improved (8 sectors) but still tech-heavy (23/33 symbols)
 - 40% slot utilization (2/5) — filters may be strict or market not offering setups
+- Paper incubation tracking for experiments requires manual data entry (future: auto-tag)
 
 ## Backtesting Assessment
 Current backtests are **event-driven** (bar-by-bar), with **0.1% flat slippage**, **stop-limit fill logic**, and **volatility-targeted sizing**.
@@ -207,7 +220,7 @@ Key insights:
 - Health summary, recovery tests, manual-review escalation
 - Refactored common.py → infra/ modules, manage_growth.py → growth/ modules
 
-## Phase 1 Improvements (Partially Implemented)
+## Phase 1 Improvements (Complete)
 - ✅ Intraday manage runs (10:30 AM, 1:00 PM, 4:05 PM)
 - ✅ Slippage tracking, gap-up filter, daily circuit breaker
 - ✅ Trail upgrades at R milestones (4R/5R/6R/8R)
@@ -224,7 +237,49 @@ Key insights:
 - ⬜ Setup-level performance attribution (full metadata per trade)
 - ⬜ Setup-specific ranking (separate scoring per setup type)
 
+## Phase 2: Controlled Experiment Loop (Implemented May 14, 2026)
+
+### Modules
+- `analytics/variants.py` — Apply dotted-path parameter overrides to baseline strategy
+- `analytics/scorecards.py` — Build comparable metric scorecards, IS/OOS split
+- `analytics/promotion.py` — Evaluate explicit promotion gates against configurable thresholds
+- `analytics/evaluate_experiment.py` — End-to-end pipeline: backtest → scorecard → gates → report
+- `analytics/experiments.py` — Enhanced registry: 7 statuses with validated transitions
+
+### Config
+- `config/promotion_rules.json` — 10 configurable promotion gates
+- `config/experiments/` — Experiment definitions (JSON), 2 examples included
+
+### Workflow
+```
+1. Define: config/experiments/my_experiment.json (hypothesis + overrides)
+2. Run:    python scripts/analytics/evaluate_experiment.py config/experiments/my_experiment.json
+3. Review: state/shared/experiments/my_experiment_report.md
+4. Paper:  Transition to active_paper in registry, track paper trades
+5. Decide: Manually promote or reject based on gate results + paper data
+```
+
+### Promotion Gates
+- min_trade_count (15), min_oos_trade_count (8)
+- profit_factor ≥ 1.0, oos_profit_factor ≥ 0.8
+- expectancy must not degrade, max_drawdown increase ≤ 3%
+- win_rate ≥ 30%, avg_r ≥ -0.5
+- Paper incubation required before promotion
+- **All advisory only — no auto-promotion, no config mutation**
+
+### Safety
+- Baseline strategy_growth.json is NEVER modified
+- All output is recommendation-only
+- Rollback path always preserved
+- 30 dedicated tests covering variants, scorecards, gates, lifecycle, IS-good-OOS-bad regression
+
+### Example Experiments
+- `exp_wider_pullback_001` — Increase shallow pullback max_depth_atr from 1.5 → 2.0
+- `exp_trail_tighter_002` — Tighten trailing_atr_multiplier from 3.0 → 2.5
+
 ## Refactoring History
+- **May 14, 2026**: Phase 2 implemented — controlled experiment loop with variants, scorecards, IS/OOS split, promotion gates, evaluation pipeline. 30 new tests (95 total). Watchlist expanded from 27 → 33 symbols (added LLY, JPM, FTNT, ZS, FIX, GNRC for sector diversification: Healthcare, Financials, Industrials). README and CONTEXT updated.
+- **May 13, 2026**: Full script audit — all 22 modules import clean, all scripts run successfully, 65 tests pass. SSH key setup for dual GitHub accounts. Pushed to git.
 - **May 12, 2026 (late)**: Walk-forward backtest implemented (5 windows, 100% profitable). Vol sizing added to backtest engine. Fixed performance.py equity curve path (was state/ → now state/shared/) and position tracking path (was old conservative → now growth). CONTEXT.md and README.md updated.
 - **May 12, 2026 (evening)**: Added 30 unit tests for growth/decisions.py. Fixed performance.py largest_loser bug. Fixed slack_bot.py /summary indentation. Pushed to git.
 - **May 12, 2026**: Archived conservative bot to `scripts/legacy/`. Growth bot is now the sole production path. Removed conservative branches from orchestrator, simplified CLI (no more `bot` parameter), updated config loaders to default to growth. Cleaned up healthcheck, reports, slack_bot conservative references.
