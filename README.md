@@ -478,13 +478,33 @@ python3 scripts/reset_controls.py status        # Reset status overview
 
 ## Paper Trading Results
 
-Paper trading launched May 4, 2026 with $20K starting capital.
+Paper trading launched May 4, 2026 with $20K starting capital. Current equity: **$20,463** (+2.32%).
 
-| # | Symbol | Setup | Entry | Exit | P&L | R | Exit Type | Status |
-|---|--------|-------|-------|------|-----|---|-----------|--------|
-| 1 | MU | — | $572.91 | $734.60 | +$323.36 | 2.79R | trailing_stop | Closed |
-| 2 | SMH | breakout | $517.22 | — | — | — | — | Open (trailing) |
-| 3 | AMD | continuation | $431.57 | — | — | — | — | Open (initial) |
+### Closed Trades
+| # | Symbol | Setup | Entry | Exit | Qty | P&L | R | Exit Type | Bars Held |
+|---|--------|-------|-------|------|-----|-----|---|-----------|-----------|
+| 1 | MU | breakout | $572.91 | $734.60 | 2 | +$323.36 | +2.79R | trailing_stop | 8 |
+
+**MU trade narrative:** First trade placed on day 1 (May 4). Breakout setup near 55-day high, score 100. Stock ran from $572 → $734+ over 8 bars. Exit system progressed through all three phases (initial → protected → trailing). Trailing stop caught the reversal at $734.60 for a +28.2% gain and 2.79R. Demonstrates the phased exit system working as designed.
+
+### Open Positions
+| # | Symbol | Setup | Entry | Current | Qty | P&L | R | Phase | Best R | Bars |
+|---|--------|-------|-------|---------|-----|-----|---|-------|--------|------|
+| 2 | SMH | breakout | $517.22 | $554.44 | 4 | +$148.88 | +1.2R | trailing | 2.05R | 9 |
+| 3 | AMD | continuation | $431.57 | $422.48 | 1 | -$9.09 | -0.15R | initial | 0.55R | 6 |
+
+### Account Summary (as of May 15, 2026)
+| Metric | Value |
+|--------|-------|
+| Starting capital | $20,000 |
+| Current equity | $20,463.14 (+2.32%) |
+| Peak equity | $20,702.21 |
+| Max drawdown from peak | -1.15% |
+| Closed P&L | +$323.36 |
+| Unrealized P&L | +$139.79 |
+| Win rate | 100% (1/1) |
+| Slots used | 2/5 |
+| Days trading | 10 |
 
 
 ## Backtest Results

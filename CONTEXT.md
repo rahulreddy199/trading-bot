@@ -1,6 +1,6 @@
 # Trading Bot - Project Context & Status
 
-## Last Updated: May 14, 2026
+## Last Updated: May 15, 2026
 
 ## Current Status: Paper-Trading Active (Week 2) — Growth Bot Only | Phase 3 Production Hardening Implemented
 
@@ -9,7 +9,7 @@
 - **Growth bot is the sole production bot** — conservative bot archived to `scripts/legacy/`
 - **3 trades entered**, 1 closed (MU: +$323.36, +2.79R trailing stop exit)
 - **2 positions open**: AMD (continuation, initial phase), SMH (breakout, trailing phase)
-- **Current equity**: ~$20,540
+- **Current equity**: $20,463 (+2.32% total return, -1.15% max DD from peak)
 - **149 unit tests** all passing (decisions, analytics, recovery, Phase 2, Phase 3 controls)
 - **Phase 3 production hardening implemented** — kill switch, pause rules, pre-trade controls, reconciliation, health monitoring, alerting, audit logging
 - **Phase 2 experiment loop implemented** — controlled backtest evaluation, promotion gates, IS/OOS split
@@ -194,12 +194,68 @@ pending → initial → protected (1.5R) → trailing (2.5R) → (trailing stop 
 - **Tracked:** code, config, daily reports, weekly reports, journals
 - **Gitignored:** .env, venv, state JSON (except reports), locks, logs
 
-## Paper Trading Results (as of May 12)
-| Trade | Symbol | Setup | Entry | Exit | P&L | R | Exit Type | Status |
-|-------|--------|-------|-------|------|-----|---|-----------|--------|
-| 1 | MU | — | $572.91 | $734.60 | +$323.36 | 2.79R | trailing_stop | Closed |
-| 2 | SMH | breakout | $517.22 | — | ~+$173 | ~1.4R | — | Open (trailing) |
-| 3 | AMD | continuation | $431.57 | — | ~+$16 | ~0.27R | — | Open (initial) |
+## Paper Trading Results (as of May 15, 2026)
+
+### Closed Trades
+| # | Symbol | Setup | Entry | Exit | Qty | P&L | R | Exit Type | Holding |
+|---|--------|-------|-------|------|-----|-----|---|-----------|---------|
+| 1 | MU | breakout | $572.91 | $734.60 | 2 | +$323.36 | +2.79R | trailing_stop | 8 bars |
+
+#### MU Trade Details
+- **Entry date:** May 4, 2026
+- **Exit date:** May 12, 2026 (8 trading days held)
+- **Setup:** Breakout — price near 55-day high, qualified with score 100.0
+- **Entry:** Stop-limit buy at $572.91 (2 shares)
+- **Initial stop:** ~$515 area (estimated from R calculation: $572.91 - 2.79R means R ≈ $58/share → stop ~$515)
+- **Exit:** Trailing stop filled at $734.60
+- **P&L:** +$323.36 (+28.2% on position, +$161.68/share)
+- **R-multiple:** +2.79R — exited via trailing stop after strong run
+- **Phase progression:** initial → protected → trailing → trailing stop filled
+- **Regime at entry:** full_risk (SPY & QQQ above 50-day SMA)
+- **Notes:** First trade of the bot. Entered on day 1 of paper trading. Stock ran from $572 → $734+ before trailing stop caught the reversal. Demonstrates the 3-phase exit system working as designed.
+
+### Open Positions
+| # | Symbol | Setup | Entry | Current | Qty | Open P&L | R | Phase | Best R | Bars | Stop |
+|---|--------|-------|-------|---------|-----|----------|---|-------|--------|------|------|
+| 2 | SMH | breakout | $517.22 | $554.44 | 4 | +$148.88 | +1.2R | trailing | 2.05R | 9 | $543.94 |
+| 3 | AMD | continuation | $431.57 | $422.48 | 1 | -$9.09 | -0.15R | initial | 0.55R | 6 | $372.75 |
+
+#### SMH Position Details
+- **Entry date:** May 5, 2026 (filled at $517.22, 4 shares)
+- **Setup:** Breakout — 55-day high, candidate score 99.4
+- **ATR at entry:** $12.41 | R per share: $31.10
+- **Initial stop:** $486.12 → Current trailing stop: $543.94
+- **Best price reached:** $581.08 (peak R = 2.05R)
+- **Current drawdown from best:** -4.6%
+- **Stop distance:** 1.9% below current price
+- **Phase:** Trailing (activated at 2.5R after 5 bars in profit)
+- **Slippage:** Minimal (filled near trigger)
+
+#### AMD Position Details
+- **Entry date:** May 6, 2026 (filled at $431.57, 1 share)
+- **Setup:** Continuation — 2-bar pullback, green close, rel vol 1.23×
+- **ATR at entry:** $23.60 (5.47% of price) | R per share: $58.82
+- **Vol scalar:** 0.70× (high-vol bucket, reduced sizing)
+- **Initial stop:** $372.75 (11.8% below current price)
+- **Best price reached:** $464.10 (peak R = 0.55R)
+- **Current drawdown from best:** -9.0%
+- **Phase:** Initial — stop has not been raised yet
+- **Slippage:** -$0.18 / -4.2 bps (price improvement)
+- **Watch:** Time stop at bar 10 if < 0.5R progress (4 bars remaining)
+
+### Account Summary
+| Metric | Value |
+|--------|-------|
+| Starting capital | $20,000 |
+| Current equity | $20,463.14 |
+| Total return | +$463.14 (+2.32%) |
+| Realized P&L | +$323.36 |
+| Unrealized P&L | +$139.79 |
+| Peak equity | $20,702.21 (May 11) |
+| Max drawdown from peak | -1.15% |
+| Days trading | 10 |
+| Win rate | 100% (1/1 closed) |
+| Slots used | 2/5 |
 
 ## Known Issues
 - Trade history setup_type/bars_held show "?" for order_scan-detected closes
